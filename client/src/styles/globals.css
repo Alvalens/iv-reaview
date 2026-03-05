@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@theme inline {
+  /* Core palette (matching iv-kogen) */
+  --color-primary: #001427;
+  --color-secondary: #052038;
+  --color-tertiary: #094170;
+  --color-quaternary: #21b5fe;
+  --color-destructive: #ff4141;
+
+  --color-background: #001427;
+  --color-foreground: #ededed;
+
+  /* shadcn semantic tokens */
+  --color-card: #052038;
+  --color-card-foreground: #ededed;
+  --color-popover: #052038;
+  --color-popover-foreground: #ededed;
+  --color-muted: #094170;
+  --color-muted-foreground: rgba(255, 255, 255, 0.4);
+  --color-accent: #094170;
+  --color-accent-foreground: #21b5fe;
+  --color-destructive-foreground: #ffffff;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-input: rgba(255, 255, 255, 0.1);
+  --color-ring: #21b5fe;
+
+  --radius: 0.75rem;
+}
+
+body {
+  background: var(--color-primary);
+  color: var(--color-foreground);
+  font-family: system-ui, -apple-system, sans-serif;
+}
