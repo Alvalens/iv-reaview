@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model InterviewSession {
+  id             String    @id @default(cuid())
+
+  // Job context
+  jobTitle       String
+  companyName    String
+  jobDescription String
+  cvContent      String?
+  interviewType  String    // "HR" | "TECHNICAL"
+
+  // Persona configuration
+  personaId      String
+  personaName    String
+  personaConfig  String    // JSON string: full PersonaConfig object
+  voiceName      String
+
+  // Session lifecycle
+  status         String    @default("CREATED")
+  // States: CREATED → LIVE → COMPLETED → SCORING → SCORED | ERROR
+  startedAt      DateTime?
+  endedAt        DateTime?
+  duration       Int       @default(600) // Target duration in seconds
+
+  // Transcript (JSON string: Array<TranscriptEntry>)
+  transcript     String?
+
+  // Overall scores (populated by post-session scoring)
+  overallScore   Float?
+  contentScore   Float?
+  deliveryScore  Float?
+  nonVerbalScore Float?
+
+  // AI-generated narrative
+  narrative      String?
+  strengths      String?   // JSON: Array<{category, description}>
+  weaknesses     String?   // JSON: Array<{category, description, priority}>
+
+  // Per-question breakdown
+  questions      InterviewQuestion[]
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model InterviewQuestion {
+  id                 String           @id @default(cuid())
+  interviewSessionId String
+  session            InterviewSession @relation(fields: [interviewSessionId], references: [id], onDelete: Cascade)
+
+  questionIndex      Int
+  question           String
+  answer             String
+
+  // Per-question scores
+  contentScore       Float?
+  deliveryScore      Float?
+  nonVerbalScore     Float?
+  feedback           String?
+
+  createdAt          DateTime @default(now())
+
+  @@unique([interviewSessionId, questionIndex])
+}
