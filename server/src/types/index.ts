@@ -85,4 +85,5 @@ export type ServerWSMessage =
   | { type: "audio"; data: string } // base64 PCM16 audio from Gemini
   | { type: "transcript"; entry: TranscriptEntry }
   | { type: "status"; status: SessionStatus }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "interrupt" }; // signals client to clear audio playback buffer
