@@ -54,7 +54,7 @@ sessionsRouter.post("/", async (req: Request, res: Response) => {
 // GET /api/sessions/:id — Get session details
 sessionsRouter.get("/:id", async (req: Request, res: Response) => {
   const session = await prisma.interviewSession.findUnique({
-    where: { id: req.params.id },
+    where: { id: req.params.id as string },
     include: { questions: true },
   });
 

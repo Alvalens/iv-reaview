@@ -1,6 +1,9 @@
 import {
   GoogleGenAI,
   Modality,
+  StartSensitivity,
+  EndSensitivity,
+  ActivityHandling,
   type Session,
   type LiveServerMessage,
 } from "@google/genai";
@@ -40,10 +43,15 @@ export async function connectToGemini(opts: {
       realtimeInputConfig: {
         automaticActivityDetection: {
           disabled: false,
-          startOfSpeechSensitivity: "START_SENSITIVITY_HIGH",
-          endOfSpeechSensitivity: "END_SENSITIVITY_HIGH",
+          startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+          endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+          // Require 300ms sustained speech before committing to "speaking"
+          // This filters echo spikes which are brief
+          prefixPaddingMs: 300,
+          // Require 1s silence before deciding user stopped speaking
+          silenceDurationMs: 1000,
         },
-        activityHandling: "START_OF_ACTIVITY_INTERRUPTS",
+        activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
       },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
@@ -52,7 +60,7 @@ export async function connectToGemini(opts: {
         : {},
       contextWindowCompression: {
         slidingWindow: {},
-        triggerTokens: 100000,
+        triggerTokens: "100000",
       },
     },
     callbacks: {

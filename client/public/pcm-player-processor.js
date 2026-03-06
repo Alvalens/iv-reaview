@@ -12,6 +12,13 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     this._currentBuffer = null;
 
     this.port.onmessage = (event) => {
+      // Clear queue on interrupt
+      if (event.data === "clear") {
+        this._queue = [];
+        this._currentBuffer = null;
+        this._offset = 0;
+        return;
+      }
       // Receive Int16Array buffer from main thread
       const int16 = new Int16Array(event.data);
       // Convert Int16 → Float32

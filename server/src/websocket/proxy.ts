@@ -116,6 +116,10 @@ export async function handleWebSocketConnection(
   }
 
   // Wire client message handlers
+  let audioChunkCount = 0;
+  let audioByteTotal = 0;
+  let lastAudioLogTime = 0;
+
   ws.on("message", (data, isBinary) => {
     const session = getActiveSession(sessionId);
     if (!session?.geminiSession || session.status !== "live") return;
@@ -123,6 +127,18 @@ export async function handleWebSocketConnection(
     if (isBinary) {
       // Binary frame = raw PCM16 audio from client mic
       const buffer = data as Buffer;
+      audioChunkCount++;
+      audioByteTotal += buffer.length;
+
+      // Log first 3 chunks and then every 5 seconds
+      const now = Date.now();
+      if (audioChunkCount <= 3 || now - lastAudioLogTime > 5000) {
+        console.log(
+          `[WS] Audio chunk #${audioChunkCount} from client: ${buffer.length} bytes (total: ${audioByteTotal} bytes)`
+        );
+        lastAudioLogTime = now;
+      }
+
       const base64 = buffer.toString("base64");
       sendAudioToGemini(session.geminiSession, base64);
     } else {
