@@ -13,6 +13,9 @@ export interface ActiveSession {
   status: "connecting" | "live" | "ending" | "closed";
   pendingUserText: string;
   pendingModelText: string;
+  /** True while Gemini is producing audio — used to gate client mic audio */
+  modelSpeaking: boolean;
+  modelSpeakingTimeout: ReturnType<typeof setTimeout> | null;
 }
 
 const activeSessions = new Map<string, ActiveSession>();

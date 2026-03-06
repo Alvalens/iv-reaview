@@ -28,6 +28,9 @@ class AudioStreamer {
   private readonly SCHEDULE_AHEAD_TIME = 0.2;
   private readonly INITIAL_BUFFER_TIME = 0.1;
 
+  /** Fires when all scheduled audio finishes playing through speakers */
+  public onComplete: () => void = () => {};
+
   constructor(ctx: AudioContext) {
     this.ctx = ctx;
     this.gainNode = this.ctx.createGain();
@@ -90,6 +93,10 @@ class AudioStreamer {
         source.onended = () => {
           if (!this.queue.length && this.endOfQueueSource === source) {
             this.endOfQueueSource = null;
+            // Only fire onComplete when stream is marked complete (turnComplete received)
+            if (this.isStreamComplete) {
+              this.onComplete();
+            }
           }
         };
       }
@@ -164,6 +171,15 @@ class AudioStreamer {
     this.gainNode.gain.setValueAtTime(1, this.ctx.currentTime);
   }
 
+  /** Mark stream as complete — onComplete fires when last buffer finishes playing */
+  complete(): void {
+    this.isStreamComplete = true;
+    // If nothing is playing/queued, fire immediately
+    if (!this.isPlaying || (this.queue.length === 0 && !this.endOfQueueSource)) {
+      this.onComplete();
+    }
+  }
+
   /** Full teardown */
   destroy(): void {
     this.stop();
@@ -192,6 +208,7 @@ export function useLiveSession(sessionId: string) {
 
   // Player ref
   const streamerRef = useRef<AudioStreamer | null>(null);
+
 
   const endSession = useCallback(() => {
     const ws = wsRef.current;
@@ -227,9 +244,9 @@ export function useLiveSession(sessionId: string) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            echoCancellation: { ideal: true },
-            noiseSuppression: { ideal: true },
-            autoGainControl: { ideal: true },
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
           },
         });
         if (cancelled) {
@@ -273,11 +290,10 @@ export function useLiveSession(sessionId: string) {
             const buf = event.data as ArrayBuffer;
             currentWs.send(buf);
 
-            // Log periodically to verify audio keeps flowing
             audioChunkCount++;
             if (
               audioChunkCount <= 3 ||
-              audioChunkCount % 50 === 0 // ~every 6.4s at 16kHz/2048
+              audioChunkCount % 50 === 0
             ) {
               console.log(
                 `[LiveSession] Audio chunk #${audioChunkCount}, size: ${buf.byteLength} bytes`
@@ -301,7 +317,13 @@ export function useLiveSession(sessionId: string) {
       if (ctx.state === "suspended") {
         await ctx.resume();
       }
-      streamerRef.current = new AudioStreamer(ctx);
+      const streamer = new AudioStreamer(ctx);
+      // When all audio finishes playing through speakers, resume mic
+      // Add 300ms delay for residual room echo to die down
+      streamer.onComplete = () => {
+        console.log("[LiveSession] Audio playback complete");
+      };
+      streamerRef.current = streamer;
       console.log(
         "[LiveSession] Player initialized, sampleRate:",
         ctx.sampleRate
@@ -342,9 +364,10 @@ export function useLiveSession(sessionId: string) {
             ]);
             break;
           case "interrupt":
-            // Matching official demo: call stop() on interrupt
-            // addPCM16() will auto-restart playback when new audio arrives
             streamerRef.current?.stop();
+            break;
+          case "turnComplete":
+            streamerRef.current?.complete();
             break;
           case "error":
             console.error("[LiveSession] Error:", msg.message);

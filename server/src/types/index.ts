@@ -86,4 +86,5 @@ export type ServerWSMessage =
   | { type: "transcript"; entry: TranscriptEntry }
   | { type: "status"; status: SessionStatus }
   | { type: "error"; message: string }
-  | { type: "interrupt" }; // signals client to clear audio playback buffer
+  | { type: "interrupt" } // signals client to clear audio playback buffer
+  | { type: "turnComplete" }; // signals model finished speaking

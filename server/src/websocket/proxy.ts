@@ -87,6 +87,8 @@ export async function handleWebSocketConnection(
     status: "connecting",
     pendingUserText: "",
     pendingModelText: "",
+    modelSpeaking: false,
+    modelSpeakingTimeout: null,
   };
   setActiveSession(sessionId, active);
 
@@ -129,6 +131,17 @@ export async function handleWebSocketConnection(
       const buffer = data as Buffer;
       audioChunkCount++;
       audioByteTotal += buffer.length;
+
+      // Audio gating: don't forward mic audio while model is speaking
+      // This prevents echo feedback where the model hears its own output
+      if (session.modelSpeaking) {
+        if (audioChunkCount % 100 === 0) {
+          console.log(
+            `[WS] Audio gated (model speaking) — chunk #${audioChunkCount}`
+          );
+        }
+        return;
+      }
 
       // Log first 3 chunks and then every 5 seconds
       const now = Date.now();
@@ -218,6 +231,13 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
+      // Mark model as speaking — gates client mic audio to prevent echo
+      session.modelSpeaking = true;
+      if (session.modelSpeakingTimeout) {
+        clearTimeout(session.modelSpeakingTimeout);
+        session.modelSpeakingTimeout = null;
+      }
+
       // Decode base64 to binary buffer, send as binary frame
       const buffer = Buffer.from(base64Pcm24, "base64");
       if (session.clientWs.readyState === session.clientWs.OPEN) {
@@ -274,12 +294,33 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
+      // User interrupted — immediately ungate mic audio
+      session.modelSpeaking = false;
+      if (session.modelSpeakingTimeout) {
+        clearTimeout(session.modelSpeakingTimeout);
+        session.modelSpeakingTimeout = null;
+      }
+
       session.pendingModelText = "";
       sendToClient(session.clientWs, { type: "interrupt" });
     },
 
     onTurnComplete: () => {
-      // Model finished speaking — no action needed for now
+      const session = getActiveSession(sessionId);
+      if (!session) return;
+
+      // Model finished speaking — ungate mic after a short delay
+      // to let residual echo from speakers die down
+      if (session.modelSpeakingTimeout) {
+        clearTimeout(session.modelSpeakingTimeout);
+      }
+      session.modelSpeakingTimeout = setTimeout(() => {
+        session.modelSpeaking = false;
+        session.modelSpeakingTimeout = null;
+        console.log(`[WS] Audio gate lifted for session ${sessionId}`);
+      }, 300);
+
+      sendToClient(session.clientWs, { type: "turnComplete" });
     },
 
     onGoAway: (timeLeftMs: number) => {
@@ -406,6 +447,12 @@ async function cleanupSession(
   console.log(
     `[WS] Cleaning up session ${sessionId} → ${finalStatus}`
   );
+
+  // Clear audio gate timeout
+  if (session.modelSpeakingTimeout) {
+    clearTimeout(session.modelSpeakingTimeout);
+    session.modelSpeakingTimeout = null;
+  }
 
   // Close Gemini connection
   if (session.geminiSession) {

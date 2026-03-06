@@ -43,13 +43,10 @@ export async function connectToGemini(opts: {
       realtimeInputConfig: {
         automaticActivityDetection: {
           disabled: false,
-          startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+          startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
           endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
-          // Require 300ms sustained speech before committing to "speaking"
-          // This filters echo spikes which are brief
-          prefixPaddingMs: 300,
-          // Require 1s silence before deciding user stopped speaking
-          silenceDurationMs: 1000,
+          prefixPaddingMs: 200,
+          silenceDurationMs: 500,
         },
         activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
       },
