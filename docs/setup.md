@@ -120,9 +120,9 @@ iv-reaview/
 │   │   ├── config/env.ts            # Environment validation
 │   │   ├── db/prisma.ts             # Prisma client (better-sqlite3 adapter)
 │   │   ├── types/index.ts           # Shared TypeScript types
-│   │   ├── services/                # Persona generator, prompt builder
+│   │   ├── services/                # Persona generator, prompt builder, gemini-live
 │   │   ├── routes/                  # REST endpoints (sessions, cv, scoring)
-│   │   └── websocket/proxy.ts       # WebSocket handler (placeholder)
+│   │   └── websocket/               # WebSocket proxy + session manager
 │   ├── prisma/
 │   │   └── schema.prisma            # InterviewSession + InterviewQuestion
 │   └── prisma.config.ts             # Prisma 7 datasource config
