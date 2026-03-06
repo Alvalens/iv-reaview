@@ -204,7 +204,55 @@ function handleClientMessage(
   }
 }
 
+// Flush accumulated user transcription text as a transcript entry
+function flushPendingUserText(sessionId: string): void {
+  const session = getActiveSession(sessionId);
+  if (!session || !session.pendingUserText.trim()) return;
+
+  const entry: TranscriptEntry = {
+    role: "user",
+    text: session.pendingUserText.trim(),
+    timestamp: Date.now() - session.startedAt,
+  };
+  session.transcript.push(entry);
+  sendToClient(session.clientWs, { type: "transcript", entry });
+  console.log(
+    `[Transcript] User (${session.transcript.length}): "${entry.text.slice(0, 80)}..."`
+  );
+  session.pendingUserText = "";
+}
+
+// Flush accumulated model transcription text as a transcript entry
+function flushPendingModelText(sessionId: string): void {
+  const session = getActiveSession(sessionId);
+  if (!session || !session.pendingModelText.trim()) return;
+
+  const fullText = session.pendingModelText.trim();
+  const entry: TranscriptEntry = {
+    role: "model",
+    text: fullText,
+    timestamp: Date.now() - session.startedAt,
+  };
+  session.transcript.push(entry);
+  sendToClient(session.clientWs, { type: "transcript", entry });
+  console.log(
+    `[Transcript] Model (${session.transcript.length}): "${fullText.slice(0, 80)}..."`
+  );
+  session.pendingModelText = "";
+
+  // Check for end keyword
+  if (fullText.includes("END_INTERVIEW")) {
+    console.log(
+      `[Gemini] END_INTERVIEW detected for session ${sessionId}`
+    );
+    cleanupSession(sessionId, "COMPLETED");
+  }
+}
+
 function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
+  let inputTranscriptCount = 0;
+  let outputTranscriptCount = 0;
+
   return {
     onSetupComplete: () => {
       const session = getActiveSession(sessionId);
@@ -249,17 +297,18 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
+      inputTranscriptCount++;
+      if (inputTranscriptCount <= 5) {
+        console.log(
+          `[Gemini] InputTranscription #${inputTranscriptCount}: "${text}" finished=${finished}`
+        );
+      }
+
       session.pendingUserText += text;
 
-      if (finished && session.pendingUserText.trim()) {
-        const entry: TranscriptEntry = {
-          role: "user",
-          text: session.pendingUserText.trim(),
-          timestamp: Date.now() - session.startedAt,
-        };
-        session.transcript.push(entry);
-        sendToClient(session.clientWs, { type: "transcript", entry });
-        session.pendingUserText = "";
+      // Flush if API sends finished flag (may or may not happen per API version)
+      if (finished) {
+        flushPendingUserText(sessionId);
       }
     },
 
@@ -267,26 +316,24 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
+      outputTranscriptCount++;
+      if (outputTranscriptCount <= 5) {
+        console.log(
+          `[Gemini] OutputTranscription #${outputTranscriptCount}: "${text}" finished=${finished}`
+        );
+      }
+
+      // When model starts outputting text, flush any pending user text first
+      // (the user finished speaking and now the model is responding)
+      if (session.pendingUserText.trim()) {
+        flushPendingUserText(sessionId);
+      }
+
       session.pendingModelText += text;
 
-      if (finished && session.pendingModelText.trim()) {
-        const fullText = session.pendingModelText.trim();
-        const entry: TranscriptEntry = {
-          role: "model",
-          text: fullText,
-          timestamp: Date.now() - session.startedAt,
-        };
-        session.transcript.push(entry);
-        sendToClient(session.clientWs, { type: "transcript", entry });
-        session.pendingModelText = "";
-
-        // Check for end keyword
-        if (fullText.includes("END_INTERVIEW")) {
-          console.log(
-            `[Gemini] END_INTERVIEW detected for session ${sessionId}`
-          );
-          cleanupSession(sessionId, "COMPLETED");
-        }
+      // Flush if API sends finished flag
+      if (finished) {
+        flushPendingModelText(sessionId);
       }
     },
 
@@ -301,6 +348,8 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
         session.modelSpeakingTimeout = null;
       }
 
+      // Flush any partial model text before clearing
+      flushPendingModelText(sessionId);
       session.pendingModelText = "";
       sendToClient(session.clientWs, { type: "interrupt" });
     },
@@ -308,6 +357,12 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
     onTurnComplete: () => {
       const session = getActiveSession(sessionId);
       if (!session) return;
+
+      // Flush any remaining pending transcription text
+      // This is the primary flush mechanism per Google's recommendation:
+      // buffer streaming chunks and flush on turnComplete
+      flushPendingUserText(sessionId);
+      flushPendingModelText(sessionId);
 
       // Model finished speaking — ungate mic after a short delay
       // to let residual echo from speakers die down
@@ -459,6 +514,10 @@ async function cleanupSession(
     closeGeminiSession(session.geminiSession);
     session.geminiSession = null;
   }
+
+  // Flush any remaining pending transcription text before saving
+  flushPendingUserText(sessionId);
+  flushPendingModelText(sessionId);
 
   // Save transcript to DB
   try {

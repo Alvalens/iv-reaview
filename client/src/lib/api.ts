@@ -1,3 +1,5 @@
+import type { ScoringResult } from "./types";
+
 const API_BASE = "/api";
 
 async function request<T>(
@@ -35,7 +37,7 @@ export const api = {
   getSession: (id: string) => request(`/sessions/${id}`),
 
   scoreSession: (id: string) =>
-    request(`/sessions/${id}/score`, { method: "POST" }),
+    request<ScoringResult>(`/sessions/${id}/score`, { method: "POST" }),
 
   // Health check
   health: () => request<{ status: string }>("/health"),

@@ -75,3 +75,27 @@ export interface InterviewQuestion {
   nonVerbalScore: number | null;
   feedback: string | null;
 }
+
+// Scoring result from POST /api/sessions/:id/score
+export interface ScoringResult {
+  overallScore: number;
+  contentScore: number;
+  deliveryScore: number;
+  nonVerbalScore: number | null;
+  narrative: string;
+  strengths: Array<{ category: string; description: string }>;
+  weaknesses: Array<{
+    category: string;
+    description: string;
+    priority: string;
+  }>;
+  questions: Array<{
+    questionIndex: number;
+    question: string;
+    answer: string;
+    contentScore: number;
+    deliveryScore: number;
+    nonVerbalScore: number | null;
+    feedback: string;
+  }>;
+}

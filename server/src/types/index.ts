@@ -55,7 +55,7 @@ export interface ScoringResult {
   overallScore: number;
   contentScore: number;
   deliveryScore: number;
-  nonVerbalScore: number;
+  nonVerbalScore: number | null;
   narrative: string;
   strengths: Array<{ category: string; description: string }>;
   weaknesses: Array<{
@@ -69,7 +69,7 @@ export interface ScoringResult {
     answer: string;
     contentScore: number;
     deliveryScore: number;
-    nonVerbalScore: number;
+    nonVerbalScore: number | null;
     feedback: string;
   }>;
 }
