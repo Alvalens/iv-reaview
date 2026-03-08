@@ -132,6 +132,11 @@ const questionScoringSchema = {
       },
       required: ["wordsPerMinute", "fillerCount", "pauseCount"],
     },
+    transcribedAnswer: {
+      type: Type.STRING,
+      description:
+        "Accurate word-for-word transcription of the candidate's spoken answer from the audio",
+    },
   },
   required: [
     "contentMark",
@@ -140,6 +145,7 @@ const questionScoringSchema = {
     "reason",
     "deliveryFeedback",
     "speechMetrics",
+    "transcribedAnswer",
   ],
 };
 
@@ -200,6 +206,10 @@ Use the full 1-10 range. Avoid clustering around 5-7.
     prompt += `
 **Non-Verbal:** No video provided — set nonVerbalMark to 0 and nonVerbalFeedback to "No video available".`;
   }
+
+  prompt += `
+
+**Transcription:** Listen to the audio carefully and provide an accurate, word-for-word transcription of what the candidate actually said in the "transcribedAnswer" field. The text under "Candidate:" above is from streaming ASR and may be inaccurate — use the audio as the source of truth.`;
 
   return prompt;
 }
@@ -268,6 +278,9 @@ export async function scoreQuestion(
   const nonVerbalFeedback = hasVideo ? raw.nonVerbalFeedback : null;
   const speechMetrics = hasAudio ? raw.speechMetrics : null;
 
+  // Use accurate transcription from scoring model instead of streaming ASR
+  const accurateAnswer = raw.transcribedAnswer || media.answerText;
+
   // Upsert to DB
   await prisma.interviewQuestion.upsert({
     where: {
@@ -280,7 +293,7 @@ export async function scoreQuestion(
       interviewSessionId: sessionId,
       questionIndex: media.questionIndex,
       question: media.question,
-      answer: media.answerText,
+      answer: accurateAnswer,
       contentScore: raw.contentMark,
       deliveryScore: deliveryMark,
       nonVerbalScore: nonVerbalMark,
@@ -291,7 +304,7 @@ export async function scoreQuestion(
     },
     update: {
       question: media.question,
-      answer: media.answerText,
+      answer: accurateAnswer,
       contentScore: raw.contentMark,
       deliveryScore: deliveryMark,
       nonVerbalScore: nonVerbalMark,
@@ -303,7 +316,7 @@ export async function scoreQuestion(
   });
 
   console.log(
-    `[Scoring] Q${media.questionIndex} done: content=${raw.contentMark}, delivery=${deliveryMark}, nonVerbal=${nonVerbalMark}`
+    `[Scoring] Q${media.questionIndex} done: content=${raw.contentMark}, delivery=${deliveryMark}, nonVerbal=${nonVerbalMark}, transcribed=${accurateAnswer.length} chars`
   );
 }
 

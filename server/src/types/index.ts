@@ -64,6 +64,8 @@ export interface QuestionScoringResult {
     fillerCount: number;
     pauseCount: number;
   } | null;
+  /** Accurate transcription of user's answer from audio (replaces streaming ASR) */
+  transcribedAnswer: string;
 }
 
 // Per-question accumulated media during live session (in-memory)
