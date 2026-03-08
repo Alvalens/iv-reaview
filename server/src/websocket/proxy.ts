@@ -24,7 +24,6 @@ import type {
   TranscriptEntry,
   PersonaConfig,
   InterviewType,
-  Difficulty,
 } from "../types/index.js";
 import { scoreQuestion } from "../services/scoring.js";
 
@@ -104,12 +103,12 @@ export async function handleWebSocketConnection(
     currentTurnAudioChunks: [],
     currentTurnVideoSnapshots: [],
     scoringContext: {
-      difficulty: persona.difficulty,
       interviewType: dbSession.interviewType as InterviewType,
       jobTitle: dbSession.jobTitle,
       companyName: dbSession.companyName,
       jobDescription: dbSession.jobDescription,
       personaName: persona.name,
+      personaStyle: persona.interviewStyle,
       cvContent: dbSession.cvContent ?? undefined,
     },
     audioForwardingEnabled: false,

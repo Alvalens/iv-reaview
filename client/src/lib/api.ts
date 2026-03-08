@@ -61,6 +61,21 @@ export const api = {
     throw new Error("Scoring timed out — per-question scoring took too long");
   },
 
+  // CV extraction
+  extractCV: async (file: File): Promise<{ content: string }> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await fetch(`${API_BASE}/cv/extract`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(error.error || `CV extraction failed: ${res.status}`);
+    }
+    return res.json();
+  },
+
   // Health check
   health: () => request<{ status: string }>("/health"),
 };

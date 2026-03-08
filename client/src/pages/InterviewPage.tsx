@@ -64,7 +64,7 @@ export function InterviewPage() {
         try {
           return JSON.parse(session.personaConfig) as {
             name: string;
-            difficulty: string;
+            interviewStyle: string;
             avatar: { emoji: string; gradient: string };
           };
         } catch {
@@ -145,8 +145,8 @@ export function InterviewPage() {
             <h2 className="font-semibold text-foreground">
               {persona?.name ?? "AI Interviewer"}
             </h2>
-            <p className="text-xs text-muted-foreground capitalize">
-              {persona?.difficulty ?? ""} difficulty
+            <p className="text-xs text-muted-foreground">
+              {persona?.interviewStyle ?? ""}
             </p>
           </div>
         </div>

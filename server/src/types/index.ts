@@ -10,9 +10,6 @@ export type SessionStatus =
 // Interview type
 export type InterviewType = "HR" | "TECHNICAL";
 
-// Difficulty level
-export type Difficulty = "easy" | "medium" | "hard";
-
 // Persona configuration
 export interface PersonaConfig {
   id: string;
@@ -21,7 +18,7 @@ export interface PersonaConfig {
   company: string;
   personality: string;
   industry: string;
-  difficulty: Difficulty;
+  tone: string;
   voiceName: string;
   interviewStyle: string;
   quirks: string[];
@@ -79,12 +76,12 @@ export interface QuestionMedia {
 
 // Scoring context cached from DB at session connect time
 export interface ScoringContext {
-  difficulty: Difficulty;
   interviewType: InterviewType;
   jobTitle: string;
   companyName: string;
   jobDescription: string;
   personaName: string;
+  personaStyle: string;
   cvContent?: string;
 }
 

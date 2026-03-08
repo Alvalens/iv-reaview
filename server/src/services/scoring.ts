@@ -3,7 +3,6 @@ import { env } from "../config/env.js";
 import { prisma } from "../db/prisma.js";
 import type {
   TranscriptEntry,
-  Difficulty,
   ScoringResult,
   InterviewType,
   QuestionMedia,
@@ -155,13 +154,6 @@ function buildQuestionScoringPrompt(
   media: QuestionMedia,
   ctx: ScoringContext
 ): string {
-  const difficultyRubric: Record<Difficulty, string> = {
-    easy: "Standard rubric — good, relevant answers score 7+. Be encouraging but honest.",
-    medium:
-      "Moderate rubric — needs strong specifics and clear examples for 7+. Fair but thorough.",
-    hard: "Demanding rubric — needs excellent, well-structured answers with depth for 7+. Critical and exacting.",
-  };
-
   const hasAudio = media.audioPcmChunks.length > 0;
   const hasVideo = media.videoSnapshots.length > 0;
 
@@ -170,8 +162,10 @@ function buildQuestionScoringPrompt(
 ## Context
 Position: ${ctx.jobTitle} at ${ctx.companyName}
 Interview Type: ${ctx.interviewType}
-Difficulty: ${ctx.difficulty}
-Rubric: ${difficultyRubric[ctx.difficulty]}
+Interviewer Style: ${ctx.personaStyle}
+
+## Scoring Rubric
+Use the full 1-10 range honestly. A good, relevant answer with examples scores 7+. An exceptional answer with depth and specifics scores 9+. Vague or generic answers cap at 5-6.
 
 Job Description (excerpt): ${ctx.jobDescription.substring(0, 1500)}`;
 
@@ -185,8 +179,7 @@ Job Description (excerpt): ${ctx.jobDescription.substring(0, 1500)}`;
 **Interviewer:** ${media.question}
 **Candidate:** ${media.answerText}
 
-## Scoring Instructions
-Use the full 1-10 range. Avoid clustering around 5-7.
+## Scoring Dimensions
 - 1-2: Very Poor  3-4: Poor  5-6: Average  7-8: Strong  9-10: Excellent
 
 **Content (1-10):** Relevance, depth, use of examples, structure, domain knowledge.`;
@@ -209,6 +202,7 @@ Use the full 1-10 range. Avoid clustering around 5-7.
 
   prompt += `
 
+  
 **Transcription:** Listen to the audio carefully and provide an accurate, word-for-word transcription of what the candidate actually said in the "transcribedAnswer" field. The text under "Candidate:" above is from streaming ASR and may be inaccurate — use the audio as the source of truth.`;
 
   return prompt;
@@ -399,7 +393,7 @@ export async function aggregateSessionScores(
   const narrativePrompt = `You are an expert interview coach. Generate a performance summary for this ${scoringContext.interviewType} interview.
 
 Position: ${scoringContext.jobTitle} at ${scoringContext.companyName}
-Difficulty: ${scoringContext.difficulty}
+Interviewer: ${scoringContext.personaName} (${scoringContext.personaStyle})
 Overall Score: ${overallScore}/10
 
 ## Per-Question Results

@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { prisma } from "../db/prisma.js";
 import { aggregateSessionScores } from "../services/scoring.js";
-import type { Difficulty, InterviewType } from "../types/index.js";
+import type { InterviewType } from "../types/index.js";
 
 export const scoringRouter = Router();
 
@@ -84,12 +84,12 @@ scoringRouter.post("/:id/score", async (req: Request, res: Response) => {
   try {
     const persona = JSON.parse(session.personaConfig);
     const scoringContext = {
-      difficulty: persona.difficulty as Difficulty,
       interviewType: session.interviewType as InterviewType,
       jobTitle: session.jobTitle,
       companyName: session.companyName,
       jobDescription: session.jobDescription,
       personaName: persona.name,
+      personaStyle: persona.interviewStyle ?? "Standard professional interview",
       cvContent: session.cvContent ?? undefined,
     };
 

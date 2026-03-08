@@ -8,7 +8,6 @@ export type SessionStatus =
   | "ERROR";
 
 export type InterviewType = "HR" | "TECHNICAL";
-export type Difficulty = "easy" | "medium" | "hard";
 
 // Persona config (mirrors server type)
 export interface PersonaConfig {
@@ -18,7 +17,7 @@ export interface PersonaConfig {
   company: string;
   personality: string;
   industry: string;
-  difficulty: Difficulty;
+  tone: string;
   voiceName: string;
   interviewStyle: string;
   quirks: string[];
