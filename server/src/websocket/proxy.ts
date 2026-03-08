@@ -517,8 +517,11 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
-      // Expected close during cleanup
-      if (session.status === "ending" || session.status === "closed") return;
+      // Expected close during cleanup or already reconnecting
+      if (session.status === "ending" || session.status === "closed" || session.status === "reconnecting") {
+        console.log(`[Gemini] Connection closed (expected, status=${session.status}) for session ${sessionId}`);
+        return;
+      }
 
       console.log(
         `[Gemini] Unexpected close for session ${sessionId}`
@@ -540,6 +543,13 @@ async function attemptReconnect(
   const session = getActiveSession(sessionId);
   if (!session) return;
 
+  // Prevent duplicate reconnects (GoAway + onClose both fire)
+  if (session.status === "reconnecting" || session.status === "ending" || session.status === "closed") {
+    console.log(`[Gemini] Skipping reconnect — session ${sessionId} already ${session.status}`);
+    return;
+  }
+
+  session.status = "reconnecting";
   console.log(`[Gemini] Attempting reconnect for session ${sessionId}`);
 
   // Close old Gemini session

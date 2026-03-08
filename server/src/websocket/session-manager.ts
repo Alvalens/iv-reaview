@@ -14,7 +14,7 @@ export interface ActiveSession {
   transcript: TranscriptEntry[];
   startedAt: number;
   resumptionHandle: string | null;
-  status: "connecting" | "live" | "ending" | "closed";
+  status: "connecting" | "live" | "reconnecting" | "ending" | "closed";
   pendingUserText: string;
   pendingModelText: string;
   /** True while Gemini is producing audio — used to gate client mic audio */
