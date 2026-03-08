@@ -1,89 +1,317 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { env } from "../config/env.js";
+import { prisma } from "../db/prisma.js";
 import type {
   TranscriptEntry,
   Difficulty,
   ScoringResult,
   InterviewType,
+  QuestionMedia,
+  QuestionScoringResult,
+  ScoringContext,
 } from "../types/index.js";
 
 const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 
-// --- Transcript Parser ---
-
-interface QAPair {
-  questionIndex: number;
-  question: string;
-  answer: string;
-}
+// --- WAV Builder ---
 
 /**
- * Parse raw transcript entries into question-answer pairs.
- * Strategy: model turns ending with "?" are questions; subsequent user turns are answers.
- * Multiple user turns before the next question are concatenated.
+ * Prepend a 44-byte WAV header to raw PCM16 data.
+ * Gemini generateContent requires a container format (audio/wav), not raw PCM.
  */
-export function parseTranscriptToQA(
-  entries: TranscriptEntry[]
-): QAPair[] {
-  const pairs: QAPair[] = [];
-  let currentQuestion: string | null = null;
-  let currentAnswer: string[] = [];
-  let questionIndex = 0;
+function buildWavBuffer(pcmChunks: Buffer[], sampleRate = 16000): Buffer {
+  const pcmData = Buffer.concat(pcmChunks);
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const dataSize = pcmData.length;
 
-  for (const entry of entries) {
-    if (entry.role === "model") {
-      // If we have a pending Q&A, save it before starting a new question
-      if (currentQuestion && currentAnswer.length > 0) {
-        pairs.push({
-          questionIndex,
-          question: currentQuestion,
-          answer: currentAnswer.join(" "),
-        });
-        questionIndex++;
-        currentAnswer = [];
-      }
+  const wav = Buffer.alloc(44 + dataSize);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(36 + dataSize, 4);
+  wav.write("WAVE", 8, "ascii");
+  wav.write("fmt ", 12, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20); // PCM
+  wav.writeUInt16LE(numChannels, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(byteRate, 28);
+  wav.writeUInt16LE(blockAlign, 32);
+  wav.writeUInt16LE(bitsPerSample, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(dataSize, 40);
+  pcmData.copy(wav, 44);
 
-      // Check if this model turn contains a question
-      const text = entry.text.trim();
-      if (text.includes("?")) {
-        currentQuestion = text;
-      } else if (!currentQuestion) {
-        // Opening statement / small talk — skip
-        continue;
-      }
-      // If model speaks without a question after a Q&A pair,
-      // it might be a follow-up or transition — treat as new context
-    } else if (entry.role === "user" && currentQuestion) {
-      currentAnswer.push(entry.text.trim());
-    }
-  }
-
-  // Save last Q&A pair
-  if (currentQuestion && currentAnswer.length > 0) {
-    pairs.push({
-      questionIndex,
-      question: currentQuestion,
-      answer: currentAnswer.join(" "),
-    });
-  }
-
-  return pairs;
+  return wav;
 }
 
-// --- Scoring Schema (Gemini structured output) ---
+// --- Weighted Score Calculation (mirrors intervyou) ---
 
-const scoringResponseSchema = {
+export function calculateWeightedScore(
+  content: number,
+  delivery: number | null,
+  nonVerbal: number | null
+): number {
+  let score: number;
+  if (delivery !== null && nonVerbal !== null) {
+    score = content * 0.6 + delivery * 0.25 + nonVerbal * 0.15;
+  } else if (delivery !== null) {
+    score = content * 0.7 + delivery * 0.3;
+  } else if (nonVerbal !== null) {
+    score = content * 0.8 + nonVerbal * 0.2;
+  } else {
+    score = content;
+  }
+  return Math.round(score * 10) / 10;
+}
+
+// --- Null-safe average ---
+
+function avg(values: (number | null)[]): number {
+  const nums = values.filter((v): v is number => v !== null && v !== undefined);
+  if (nums.length === 0) return 0;
+  return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
+}
+
+function avgOrNull(values: (number | null)[]): number | null {
+  const nums = values.filter((v): v is number => v !== null && v !== undefined);
+  if (nums.length === 0) return null;
+  return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10;
+}
+
+// --- Per-Question Scoring Schema ---
+
+const questionScoringSchema = {
   type: Type.OBJECT,
   properties: {
-    overallScore: { type: Type.NUMBER, description: "Overall score 1-10" },
-    contentScore: {
+    contentMark: {
       type: Type.NUMBER,
       description: "Content quality score 1-10",
     },
-    deliveryScore: {
+    deliveryMark: {
       type: Type.NUMBER,
-      description: "Delivery/communication score 1-10",
+      description: "Delivery/speech score 1-10 (0 if no audio provided)",
     },
+    nonVerbalMark: {
+      type: Type.NUMBER,
+      description:
+        "Non-verbal communication score 1-10 (0 if no video provided)",
+    },
+    suggestion: {
+      type: Type.STRING,
+      description: "One-line actionable improvement tip",
+    },
+    reason: {
+      type: Type.STRING,
+      description: "Why this score and suggestion",
+    },
+    deliveryFeedback: {
+      type: Type.STRING,
+      description: "Specific speech delivery observations",
+    },
+    nonVerbalFeedback: {
+      type: Type.STRING,
+      description: "Specific body language observations",
+    },
+    speechMetrics: {
+      type: Type.OBJECT,
+      properties: {
+        wordsPerMinute: {
+          type: Type.NUMBER,
+          description: "Estimated words per minute",
+        },
+        fillerCount: {
+          type: Type.NUMBER,
+          description: "Number of filler words (um, uh, like, you know)",
+        },
+        pauseCount: {
+          type: Type.NUMBER,
+          description: "Number of notable pauses",
+        },
+      },
+      required: ["wordsPerMinute", "fillerCount", "pauseCount"],
+    },
+  },
+  required: [
+    "contentMark",
+    "deliveryMark",
+    "suggestion",
+    "reason",
+    "deliveryFeedback",
+    "speechMetrics",
+  ],
+};
+
+// --- Per-Question Prompt ---
+
+function buildQuestionScoringPrompt(
+  media: QuestionMedia,
+  ctx: ScoringContext
+): string {
+  const difficultyRubric: Record<Difficulty, string> = {
+    easy: "Standard rubric — good, relevant answers score 7+. Be encouraging but honest.",
+    medium:
+      "Moderate rubric — needs strong specifics and clear examples for 7+. Fair but thorough.",
+    hard: "Demanding rubric — needs excellent, well-structured answers with depth for 7+. Critical and exacting.",
+  };
+
+  const hasAudio = media.audioPcmChunks.length > 0;
+  const hasVideo = media.videoSnapshots.length > 0;
+
+  let prompt = `You are an expert interview evaluator. Score this single interview answer.
+
+## Context
+Position: ${ctx.jobTitle} at ${ctx.companyName}
+Interview Type: ${ctx.interviewType}
+Difficulty: ${ctx.difficulty}
+Rubric: ${difficultyRubric[ctx.difficulty]}
+
+Job Description (excerpt): ${ctx.jobDescription.substring(0, 1500)}`;
+
+  if (ctx.cvContent) {
+    prompt += `\nCandidate CV (excerpt): ${ctx.cvContent.substring(0, 1000)}`;
+  }
+
+  prompt += `
+
+## Question & Answer
+**Interviewer:** ${media.question}
+**Candidate:** ${media.answerText}
+
+## Scoring Instructions
+Use the full 1-10 range. Avoid clustering around 5-7.
+- 1-2: Very Poor  3-4: Poor  5-6: Average  7-8: Strong  9-10: Excellent
+
+**Content (1-10):** Relevance, depth, use of examples, structure, domain knowledge.`;
+
+  if (hasAudio) {
+    prompt += `
+**Delivery (1-10):** Analyze the provided audio. Evaluate vocal clarity, confidence, pace, filler word usage (um, uh, like), articulation, and pauses. Provide specific speechMetrics.`;
+  } else {
+    prompt += `
+**Delivery:** No audio provided — set deliveryMark to 0 and deliveryFeedback to "No audio available".`;
+  }
+
+  if (hasVideo) {
+    prompt += `
+**Non-Verbal (1-10):** Analyze the provided video snapshots. Evaluate eye contact (relative to camera), posture, facial expression, gestures, and overall presence.`;
+  } else {
+    prompt += `
+**Non-Verbal:** No video provided — set nonVerbalMark to 0 and nonVerbalFeedback to "No video available".`;
+  }
+
+  return prompt;
+}
+
+// --- Fire-and-Forget Per-Question Scoring ---
+
+export async function scoreQuestion(
+  sessionId: string,
+  media: QuestionMedia,
+  scoringContext: ScoringContext
+): Promise<void> {
+  const hasAudio = media.audioPcmChunks.length > 0;
+  const hasVideo = media.videoSnapshots.length > 0;
+
+  console.log(
+    `[Scoring] Q${media.questionIndex} starting: audio=${hasAudio} (${media.audioPcmChunks.length} chunks), video=${hasVideo} (${media.videoSnapshots.length} snapshots)`
+  );
+
+  // Build multimodal content parts
+  const parts: Array<
+    | { text: string }
+    | { inlineData: { mimeType: string; data: string } }
+  > = [];
+
+  // Text prompt
+  parts.push({ text: buildQuestionScoringPrompt(media, scoringContext) });
+
+  // Audio WAV
+  if (hasAudio) {
+    const wavBuffer = buildWavBuffer(media.audioPcmChunks);
+    parts.push({
+      inlineData: {
+        mimeType: "audio/wav",
+        data: wavBuffer.toString("base64"),
+      },
+    });
+  }
+
+  // Video JPEG snapshots
+  for (const snap of media.videoSnapshots) {
+    parts.push({
+      inlineData: { mimeType: "image/jpeg", data: snap },
+    });
+  }
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: [{ role: "user", parts }],
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: questionScoringSchema,
+    },
+  });
+
+  const text = response.text;
+  if (!text) {
+    throw new Error("Empty response from scoring model");
+  }
+
+  const raw = JSON.parse(text) as QuestionScoringResult;
+
+  // Server-side enforcement: null out dimensions for missing media
+  const deliveryMark = hasAudio ? raw.deliveryMark : null;
+  const nonVerbalMark = hasVideo ? raw.nonVerbalMark : null;
+  const deliveryFeedback = hasAudio ? raw.deliveryFeedback : null;
+  const nonVerbalFeedback = hasVideo ? raw.nonVerbalFeedback : null;
+  const speechMetrics = hasAudio ? raw.speechMetrics : null;
+
+  // Upsert to DB
+  await prisma.interviewQuestion.upsert({
+    where: {
+      interviewSessionId_questionIndex: {
+        interviewSessionId: sessionId,
+        questionIndex: media.questionIndex,
+      },
+    },
+    create: {
+      interviewSessionId: sessionId,
+      questionIndex: media.questionIndex,
+      question: media.question,
+      answer: media.answerText,
+      contentScore: raw.contentMark,
+      deliveryScore: deliveryMark,
+      nonVerbalScore: nonVerbalMark,
+      feedback: raw.suggestion,
+      deliveryFeedback,
+      nonVerbalFeedback,
+      speechMetrics: speechMetrics ? JSON.stringify(speechMetrics) : null,
+    },
+    update: {
+      question: media.question,
+      answer: media.answerText,
+      contentScore: raw.contentMark,
+      deliveryScore: deliveryMark,
+      nonVerbalScore: nonVerbalMark,
+      feedback: raw.suggestion,
+      deliveryFeedback,
+      nonVerbalFeedback,
+      speechMetrics: speechMetrics ? JSON.stringify(speechMetrics) : null,
+    },
+  });
+
+  console.log(
+    `[Scoring] Q${media.questionIndex} done: content=${raw.contentMark}, delivery=${deliveryMark}, nonVerbal=${nonVerbalMark}`
+  );
+}
+
+// --- Narrative Schema ---
+
+const narrativeSchema = {
+  type: Type.OBJECT,
+  properties: {
     narrative: {
       type: Type.STRING,
       description: "2-3 paragraph performance summary",
@@ -111,160 +339,153 @@ const scoringResponseSchema = {
         required: ["category", "description", "priority"],
       },
     },
-    questions: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          questionIndex: { type: Type.NUMBER },
-          question: { type: Type.STRING },
-          answer: { type: Type.STRING },
-          contentScore: { type: Type.NUMBER },
-          deliveryScore: { type: Type.NUMBER },
-          feedback: { type: Type.STRING },
-        },
-        required: [
-          "questionIndex",
-          "question",
-          "answer",
-          "contentScore",
-          "deliveryScore",
-          "feedback",
-        ],
-      },
-    },
   },
-  required: [
-    "overallScore",
-    "contentScore",
-    "deliveryScore",
-    "narrative",
-    "strengths",
-    "weaknesses",
-    "questions",
-  ],
+  required: ["narrative", "strengths", "weaknesses"],
 };
 
-// --- Scoring Prompt ---
+// --- Aggregation (replaces old scoreInterview for the endpoint) ---
 
-function buildScoringPrompt(opts: {
-  difficulty: Difficulty;
-  interviewType: InterviewType;
-  jobTitle: string;
-  companyName: string;
-  jobDescription: string;
-  personaName: string;
-  cvContent?: string;
-  qaPairs: QAPair[];
-}): string {
-  const difficultyRubric: Record<Difficulty, string> = {
-    easy: "Standard rubric — good, relevant answers score 7+. Be encouraging but honest.",
-    medium:
-      "Moderate rubric — needs strong specifics and clear examples for 7+. Fair but thorough.",
-    hard: "Demanding rubric — needs excellent, well-structured answers with depth for 7+. Critical and exacting.",
-  };
-
-  const qaBlock = opts.qaPairs
-    .map(
-      (qa) =>
-        `### Question ${qa.questionIndex + 1}\n**Interviewer:** ${qa.question}\n**Candidate:** ${qa.answer}`
-    )
-    .join("\n\n");
-
-  let prompt = `You are an expert interview evaluator. Analyze this ${opts.interviewType} interview for a ${opts.jobTitle} position at ${opts.companyName}.
-
-## Scoring Rubric
-${difficultyRubric[opts.difficulty]}
-
-Difficulty level: ${opts.difficulty}
-Interviewer: ${opts.personaName}
-
-## Job Description
-${opts.jobDescription}`;
-
-  if (opts.cvContent) {
-    prompt += `
-
-## Candidate's CV
-${opts.cvContent}`;
-  }
-
-  prompt += `
-
-## Interview Transcript (Q&A Pairs)
-
-${qaBlock}
-
-## Scoring Instructions
-
-Score each dimension on a 1-10 scale:
-- **Content (1-10)**: Relevance, depth, use of examples, structure, domain knowledge
-- **Delivery (1-10)**: Clarity of expression, confidence, conciseness, filler word usage, pace
-
-For each question, provide:
-- Content score and delivery score (1-10 each)
-- Specific actionable feedback
-
-Overall scores should reflect the weighted average:
-- Content: 70%, Delivery: 30%
-
-Provide 2-4 strengths and 2-4 weaknesses with categories ("content", "delivery", or "general") and priority levels ("high", "medium", "low").
-
-Write a 2-3 paragraph narrative summary that is constructive and actionable.`;
-
-  return prompt;
-}
-
-// --- Main Scoring Function ---
-
-export async function scoreInterview(opts: {
-  transcript: TranscriptEntry[];
-  difficulty: Difficulty;
-  interviewType: InterviewType;
-  jobTitle: string;
-  companyName: string;
-  jobDescription: string;
-  personaName: string;
-  cvContent?: string;
-}): Promise<ScoringResult> {
-  const qaPairs = parseTranscriptToQA(opts.transcript);
-
-  if (qaPairs.length === 0) {
-    throw new Error("No question-answer pairs found in transcript");
-  }
-
-  const prompt = buildScoringPrompt({
-    difficulty: opts.difficulty,
-    interviewType: opts.interviewType,
-    jobTitle: opts.jobTitle,
-    companyName: opts.companyName,
-    jobDescription: opts.jobDescription,
-    personaName: opts.personaName,
-    cvContent: opts.cvContent,
-    qaPairs,
+export async function aggregateSessionScores(
+  sessionId: string,
+  scoringContext: ScoringContext
+): Promise<ScoringResult> {
+  const questions = await prisma.interviewQuestion.findMany({
+    where: { interviewSessionId: sessionId },
+    orderBy: { questionIndex: "asc" },
   });
 
-  const response = await ai.models.generateContent({
+  if (questions.length === 0) {
+    throw new Error("No per-question scores available");
+  }
+
+  // Average across all questions
+  const overallContent = avg(questions.map((q) => q.contentScore));
+  const overallDelivery = avgOrNull(questions.map((q) => q.deliveryScore));
+  const overallNonVerbal = avgOrNull(questions.map((q) => q.nonVerbalScore));
+  const overallScore = calculateWeightedScore(
+    overallContent,
+    overallDelivery,
+    overallNonVerbal
+  );
+
+  // Build narrative prompt from per-question data
+  const qaBlock = questions
+    .map((q) => {
+      let block = `Q${q.questionIndex + 1}: ${q.question}\nAnswer: ${q.answer.substring(0, 300)}`;
+      block += `\nScores: Content=${q.contentScore ?? "N/A"}/10`;
+      if (q.deliveryScore !== null) block += `, Delivery=${q.deliveryScore}/10`;
+      if (q.nonVerbalScore !== null)
+        block += `, NonVerbal=${q.nonVerbalScore}/10`;
+      if (q.feedback) block += `\nSuggestion: ${q.feedback}`;
+      if (q.deliveryFeedback) block += `\nDelivery: ${q.deliveryFeedback}`;
+      if (q.nonVerbalFeedback) block += `\nNon-verbal: ${q.nonVerbalFeedback}`;
+      return block;
+    })
+    .join("\n\n");
+
+  const narrativePrompt = `You are an expert interview coach. Generate a performance summary for this ${scoringContext.interviewType} interview.
+
+Position: ${scoringContext.jobTitle} at ${scoringContext.companyName}
+Difficulty: ${scoringContext.difficulty}
+Overall Score: ${overallScore}/10
+
+## Per-Question Results
+${qaBlock}
+
+Write a constructive 2-3 paragraph narrative. Identify 2-4 strengths and 2-4 areas to improve with categories ("content", "delivery", "non-verbal", or "general") and priority ("high", "medium", "low").`;
+
+  const narrativeResponse = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    contents: prompt,
+    contents: narrativePrompt,
     config: {
       responseMimeType: "application/json",
-      responseSchema: scoringResponseSchema,
+      responseSchema: narrativeSchema,
     },
   });
 
-  const text = response.text;
-  if (!text) {
-    throw new Error("Empty response from scoring model");
+  const narrativeText = narrativeResponse.text;
+  if (!narrativeText) {
+    throw new Error("Empty narrative response");
   }
 
-  const result = JSON.parse(text) as ScoringResult;
+  const narrative = JSON.parse(narrativeText) as {
+    narrative: string;
+    strengths: Array<{ category: string; description: string }>;
+    weaknesses: Array<{
+      category: string;
+      description: string;
+      priority: string;
+    }>;
+  };
 
-  // Ensure nonVerbalScore is null (no video in current version)
-  result.nonVerbalScore = null;
-  for (const q of result.questions) {
-    q.nonVerbalScore = null;
+  return {
+    overallScore,
+    contentScore: overallContent,
+    deliveryScore: overallDelivery ?? overallContent,
+    nonVerbalScore: overallNonVerbal,
+    narrative: narrative.narrative,
+    strengths: narrative.strengths,
+    weaknesses: narrative.weaknesses,
+    questions: questions.map((q) => ({
+      questionIndex: q.questionIndex,
+      question: q.question,
+      answer: q.answer,
+      contentScore: q.contentScore ?? 0,
+      deliveryScore: q.deliveryScore ?? 0,
+      nonVerbalScore: q.nonVerbalScore,
+      feedback: q.feedback ?? "",
+      deliveryFeedback: q.deliveryFeedback,
+      nonVerbalFeedback: q.nonVerbalFeedback,
+      speechMetrics: q.speechMetrics
+        ? JSON.parse(q.speechMetrics as string)
+        : null,
+    })),
+  };
+}
+
+// --- Legacy: Transcript-only scoring (fallback for old sessions) ---
+
+interface QAPair {
+  questionIndex: number;
+  question: string;
+  answer: string;
+}
+
+export function parseTranscriptToQA(entries: TranscriptEntry[]): QAPair[] {
+  const pairs: QAPair[] = [];
+  let currentQuestion: string | null = null;
+  let currentAnswer: string[] = [];
+  let questionIndex = 0;
+
+  for (const entry of entries) {
+    if (entry.role === "model") {
+      if (currentQuestion && currentAnswer.length > 0) {
+        pairs.push({
+          questionIndex,
+          question: currentQuestion,
+          answer: currentAnswer.join(" "),
+        });
+        questionIndex++;
+        currentAnswer = [];
+      }
+      const text = entry.text.trim();
+      if (text.includes("?")) {
+        currentQuestion = text;
+      } else if (!currentQuestion) {
+        continue;
+      }
+    } else if (entry.role === "user" && currentQuestion) {
+      currentAnswer.push(entry.text.trim());
+    }
   }
 
-  return result;
+  if (currentQuestion && currentAnswer.length > 0) {
+    pairs.push({
+      questionIndex,
+      question: currentQuestion,
+      answer: currentAnswer.join(" "),
+    });
+  }
+
+  return pairs;
 }

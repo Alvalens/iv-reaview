@@ -65,6 +65,9 @@ model InterviewQuestion {
   deliveryScore      Float?
   nonVerbalScore     Float?
   feedback           String?
+  deliveryFeedback   String?
+  nonVerbalFeedback  String?
+  speechMetrics      String?   // JSON: { wordsPerMinute, fillerCount, pauseCount }
 
   createdAt          DateTime @default(now())
 

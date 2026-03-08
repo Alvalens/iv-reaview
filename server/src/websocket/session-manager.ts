@@ -1,6 +1,10 @@
 import type { Session } from "@google/genai";
 import type WebSocket from "ws";
-import type { PersonaConfig, TranscriptEntry } from "../types/index.js";
+import type {
+  PersonaConfig,
+  TranscriptEntry,
+  ScoringContext,
+} from "../types/index.js";
 
 export interface ActiveSession {
   sessionId: string;
@@ -16,6 +20,16 @@ export interface ActiveSession {
   /** True while Gemini is producing audio — used to gate client mic audio */
   modelSpeaking: boolean;
   modelSpeakingTimeout: ReturnType<typeof setTimeout> | null;
+  /** Per-question scoring: tracks current Q&A pair index */
+  currentQuestionIndex: number;
+  /** PCM16 audio chunks captured during current user turn */
+  currentTurnAudioChunks: Buffer[];
+  /** JPEG base64 snapshots for current user turn, max 5 */
+  currentTurnVideoSnapshots: string[];
+  /** Cached job/persona context for fire-and-forget scoring calls */
+  scoringContext: ScoringContext;
+  /** Grace period: don't forward mic audio until model starts speaking */
+  audioForwardingEnabled: boolean;
 }
 
 const activeSessions = new Map<string, ActiveSession>();

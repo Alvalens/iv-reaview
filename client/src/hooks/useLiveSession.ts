@@ -195,6 +195,7 @@ export function useLiveSession(sessionId: string) {
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
+  const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -205,6 +206,12 @@ export function useLiveSession(sessionId: string) {
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const recorderSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const recorderWorkletRef = useRef<AudioWorkletNode | null>(null);
+
+  // Video capture refs
+  const videoStreamRef = useRef<MediaStream | null>(null);
+  const videoCaptureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const videoCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
   // Player ref
   const streamerRef = useRef<AudioStreamer | null>(null);
@@ -242,24 +249,53 @@ export function useLiveSession(sessionId: string) {
 
     async function startRecorder() {
       try {
+        // Single getUserMedia for both audio + video (one permission dialog)
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           },
+          video: {
+            width: 320,
+            height: 240,
+            facingMode: "user",
+          },
+        }).catch(async () => {
+          // Fallback: audio-only if camera denied
+          console.warn("[LiveSession] Camera denied, falling back to audio-only");
+          return navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
         });
+
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
         recorderStreamRef.current = stream;
 
+        // Expose video stream for camera preview (if video tracks exist)
+        const videoTracks = stream.getVideoTracks();
+        if (videoTracks.length > 0) {
+          const vidStream = new MediaStream(videoTracks);
+          videoStreamRef.current = vidStream;
+          setVideoStream(vidStream);
+          startVideoCapture(vidStream);
+          console.log("[LiveSession] Video capture enabled");
+        }
+
+        // Audio-only stream for AudioContext (must not include video tracks)
+        const audioStream = new MediaStream(stream.getAudioTracks());
+
         // Create context at 16kHz — browser handles resampling (matching official)
         const ctx = new AudioContext({ sampleRate: 16000 });
         recorderCtxRef.current = ctx;
 
-        // Ensure context is running (can be suspended without user gesture)
         if (ctx.state === "suspended") {
           await ctx.resume();
         }
@@ -274,13 +310,12 @@ export function useLiveSession(sessionId: string) {
         await ctx.audioWorklet.addModule("/pcm-recorder-processor.js");
         if (cancelled) return;
 
-        const source = ctx.createMediaStreamSource(stream);
+        const source = ctx.createMediaStreamSource(audioStream);
         const worklet = new AudioWorkletNode(
           ctx,
           "pcm-recorder-processor"
         );
 
-        // Store refs to prevent garbage collection of audio nodes
         recorderSourceRef.current = source;
         recorderWorkletRef.current = worklet;
 
@@ -308,6 +343,49 @@ export function useLiveSession(sessionId: string) {
       } catch (err) {
         console.error("[LiveSession] Recorder failed:", err);
       }
+    }
+
+    // --- VIDEO CAPTURE (1fps JPEG snapshots for per-question scoring) ---
+    function startVideoCapture(vidStream: MediaStream) {
+      // Create offscreen video element to draw frames from
+      const video = document.createElement("video");
+      video.srcObject = vidStream;
+      video.muted = true;
+      video.playsInline = true;
+      video.play().catch(() => {});
+      videoElementRef.current = video;
+
+      // Offscreen canvas for JPEG encoding
+      const canvas = document.createElement("canvas");
+      canvas.width = 320;
+      canvas.height = 240;
+      videoCanvasRef.current = canvas;
+
+      // Capture 1 frame per second
+      videoCaptureIntervalRef.current = setInterval(() => {
+        const currentWs = wsRef.current;
+        if (!currentWs || currentWs.readyState !== WebSocket.OPEN) return;
+        if (video.readyState < 2) return; // not enough data yet
+
+        const ctx2d = canvas.getContext("2d");
+        if (!ctx2d) return;
+        ctx2d.drawImage(video, 0, 0, 320, 240);
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) return;
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64 = (reader.result as string).split(",")[1];
+              if (base64 && currentWs.readyState === WebSocket.OPEN) {
+                currentWs.send(JSON.stringify({ type: "video", data: base64 }));
+              }
+            };
+            reader.readAsDataURL(blob);
+          },
+          "image/jpeg",
+          0.7
+        );
+      }, 1000);
     }
 
     // --- PLAYER (AudioStreamer — matching official Google demo) ---
@@ -397,6 +475,22 @@ export function useLiveSession(sessionId: string) {
         timerRef.current = null;
       }
 
+      // Video capture
+      if (videoCaptureIntervalRef.current) {
+        clearInterval(videoCaptureIntervalRef.current);
+        videoCaptureIntervalRef.current = null;
+      }
+      if (videoStreamRef.current) {
+        videoStreamRef.current.getTracks().forEach((t) => t.stop());
+        videoStreamRef.current = null;
+        setVideoStream(null);
+      }
+      if (videoElementRef.current) {
+        videoElementRef.current.srcObject = null;
+        videoElementRef.current = null;
+      }
+      videoCanvasRef.current = null;
+
       // Recorder — disconnect nodes before closing context
       if (recorderSourceRef.current) {
         recorderSourceRef.current.disconnect();
@@ -440,5 +534,6 @@ export function useLiveSession(sessionId: string) {
     toggleMute,
     endSession,
     elapsedMs,
+    videoStream,
   };
 }

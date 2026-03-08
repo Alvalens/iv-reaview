@@ -199,6 +199,16 @@ export function sendVideoToGemini(
   });
 }
 
+export function sendContextToGemini(
+  session: Session,
+  contextText: string
+): void {
+  session.sendClientContent({
+    turns: [{ role: "user", parts: [{ text: contextText }] }],
+    turnComplete: true,
+  });
+}
+
 export function closeGeminiSession(session: Session): void {
   try {
     session.close();

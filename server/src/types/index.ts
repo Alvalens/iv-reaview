@@ -50,6 +50,42 @@ export interface CreateSessionRequest {
   duration?: number;
 }
 
+// Per-question scoring result from Gemini (internal)
+export interface QuestionScoringResult {
+  contentMark: number;
+  deliveryMark: number | null;
+  nonVerbalMark: number | null;
+  suggestion: string;
+  reason: string;
+  deliveryFeedback: string | null;
+  nonVerbalFeedback: string | null;
+  speechMetrics: {
+    wordsPerMinute: number;
+    fillerCount: number;
+    pauseCount: number;
+  } | null;
+}
+
+// Per-question accumulated media during live session (in-memory)
+export interface QuestionMedia {
+  questionIndex: number;
+  question: string;
+  answerText: string;
+  audioPcmChunks: Buffer[];
+  videoSnapshots: string[];
+}
+
+// Scoring context cached from DB at session connect time
+export interface ScoringContext {
+  difficulty: Difficulty;
+  interviewType: InterviewType;
+  jobTitle: string;
+  companyName: string;
+  jobDescription: string;
+  personaName: string;
+  cvContent?: string;
+}
+
 // Scoring result
 export interface ScoringResult {
   overallScore: number;
@@ -71,6 +107,13 @@ export interface ScoringResult {
     deliveryScore: number;
     nonVerbalScore: number | null;
     feedback: string;
+    deliveryFeedback: string | null;
+    nonVerbalFeedback: string | null;
+    speechMetrics: {
+      wordsPerMinute: number;
+      fillerCount: number;
+      pauseCount: number;
+    } | null;
   }>;
 }
 

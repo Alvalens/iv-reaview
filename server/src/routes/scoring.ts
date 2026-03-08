@@ -1,19 +1,14 @@
 import { Router, type Request, type Response } from "express";
 import { prisma } from "../db/prisma.js";
-import { scoreInterview } from "../services/scoring.js";
-import type {
-  TranscriptEntry,
-  Difficulty,
-  InterviewType,
-} from "../types/index.js";
+import { aggregateSessionScores } from "../services/scoring.js";
+import type { Difficulty, InterviewType } from "../types/index.js";
 
 export const scoringRouter = Router();
 
-// POST /api/sessions/:id/score — Trigger post-session scoring
+// POST /api/sessions/:id/score — Aggregate per-question scores + generate narrative
 scoringRouter.post("/:id/score", async (req: Request, res: Response) => {
   const sessionId = req.params.id as string;
 
-  // 1. Fetch session from DB
   const session = await prisma.interviewSession.findUnique({
     where: { id: sessionId },
   });
@@ -23,8 +18,8 @@ scoringRouter.post("/:id/score", async (req: Request, res: Response) => {
     return;
   }
 
+  // Already scored — return cached data
   if (session.status === "SCORED") {
-    // Already scored — return existing scores
     const questions = await prisma.interviewQuestion.findMany({
       where: { interviewSessionId: sessionId },
       orderBy: { questionIndex: "asc" },
@@ -41,44 +36,54 @@ scoringRouter.post("/:id/score", async (req: Request, res: Response) => {
         questionIndex: q.questionIndex,
         question: q.question,
         answer: q.answer,
-        contentScore: q.contentScore,
-        deliveryScore: q.deliveryScore,
+        contentScore: q.contentScore ?? 0,
+        deliveryScore: q.deliveryScore ?? 0,
         nonVerbalScore: q.nonVerbalScore,
-        feedback: q.feedback,
+        feedback: q.feedback ?? "",
+        deliveryFeedback: q.deliveryFeedback,
+        nonVerbalFeedback: q.nonVerbalFeedback,
+        speechMetrics: q.speechMetrics
+          ? JSON.parse(q.speechMetrics as string)
+          : null,
       })),
     });
     return;
   }
 
-  if (session.status !== "COMPLETED") {
+  if (session.status !== "COMPLETED" && session.status !== "SCORING") {
     res.status(400).json({
       error: `Session is in ${session.status} state, expected COMPLETED`,
     });
     return;
   }
 
-  if (!session.transcript) {
-    res.status(400).json({ error: "Session has no transcript" });
+  // Check if per-question scores exist (fire-and-forget scoring may still be running)
+  const scoredQuestions = await prisma.interviewQuestion.count({
+    where: {
+      interviewSessionId: sessionId,
+      contentScore: { not: null },
+    },
+  });
+
+  if (scoredQuestions === 0) {
+    // Per-question scoring still in progress — tell client to poll
+    res.status(202).json({
+      status: "scoring_in_progress",
+      message: "Per-question scoring is still running. Retry in a few seconds.",
+      scoredCount: 0,
+    });
     return;
   }
 
-  // 2. Set status to SCORING
+  // Set status to SCORING
   await prisma.interviewSession.update({
     where: { id: sessionId },
     data: { status: "SCORING" },
   });
 
   try {
-    const transcript: TranscriptEntry[] = JSON.parse(session.transcript);
     const persona = JSON.parse(session.personaConfig);
-
-    // 3. Call scoring service
-    console.log(
-      `[Scoring] Starting scoring for session ${sessionId} (${transcript.length} transcript entries)`
-    );
-
-    const result = await scoreInterview({
-      transcript,
+    const scoringContext = {
       difficulty: persona.difficulty as Difficulty,
       interviewType: session.interviewType as InterviewType,
       jobTitle: session.jobTitle,
@@ -86,13 +91,15 @@ scoringRouter.post("/:id/score", async (req: Request, res: Response) => {
       jobDescription: session.jobDescription,
       personaName: persona.name,
       cvContent: session.cvContent ?? undefined,
-    });
+    };
 
     console.log(
-      `[Scoring] Completed for session ${sessionId}: overall=${result.overallScore}, ${result.questions.length} questions`
+      `[Scoring] Aggregating ${scoredQuestions} scored questions for session ${sessionId}`
     );
 
-    // 4. Save scores to DB
+    const result = await aggregateSessionScores(sessionId, scoringContext);
+
+    // Save aggregated scores to session
     await prisma.interviewSession.update({
       where: { id: sessionId },
       data: {
@@ -107,26 +114,13 @@ scoringRouter.post("/:id/score", async (req: Request, res: Response) => {
       },
     });
 
-    // 5. Save per-question scores
-    for (const q of result.questions) {
-      await prisma.interviewQuestion.create({
-        data: {
-          interviewSessionId: sessionId,
-          questionIndex: q.questionIndex,
-          question: q.question,
-          answer: q.answer,
-          contentScore: q.contentScore,
-          deliveryScore: q.deliveryScore,
-          nonVerbalScore: q.nonVerbalScore,
-          feedback: q.feedback,
-        },
-      });
-    }
+    console.log(
+      `[Scoring] Aggregation complete for session ${sessionId}: overall=${result.overallScore}`
+    );
 
-    // 6. Return scores
     res.json(result);
   } catch (err) {
-    console.error(`[Scoring] Failed for session ${sessionId}:`, err);
+    console.error(`[Scoring] Aggregation failed for session ${sessionId}:`, err);
 
     await prisma.interviewSession.update({
       where: { id: sessionId },

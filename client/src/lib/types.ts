@@ -74,6 +74,13 @@ export interface InterviewQuestion {
   deliveryScore: number | null;
   nonVerbalScore: number | null;
   feedback: string | null;
+  deliveryFeedback: string | null;
+  nonVerbalFeedback: string | null;
+  speechMetrics: {
+    wordsPerMinute: number;
+    fillerCount: number;
+    pauseCount: number;
+  } | null;
 }
 
 // Scoring result from POST /api/sessions/:id/score
@@ -97,5 +104,12 @@ export interface ScoringResult {
     deliveryScore: number;
     nonVerbalScore: number | null;
     feedback: string;
+    deliveryFeedback: string | null;
+    nonVerbalFeedback: string | null;
+    speechMetrics: {
+      wordsPerMinute: number;
+      fillerCount: number;
+      pauseCount: number;
+    } | null;
   }>;
 }

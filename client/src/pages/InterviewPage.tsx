@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { Mic, MicOff, PhoneOff, Loader2 } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Loader2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLiveSession } from "@/hooks/useLiveSession";
 import { api } from "@/lib/api";
@@ -26,7 +26,18 @@ export function InterviewPage() {
     toggleMute,
     endSession,
     elapsedMs,
+    videoStream,
   } = useLiveSession(id!);
+
+  // Camera preview ref
+  const cameraPreviewRef = useRef<HTMLVideoElement>(null);
+
+  const setCameraRef = useCallback((el: HTMLVideoElement | null) => {
+    (cameraPreviewRef as React.MutableRefObject<HTMLVideoElement | null>).current = el;
+    if (el && videoStream) {
+      el.srcObject = videoStream;
+    }
+  }, [videoStream]);
 
   // Fetch session info for persona display
   useEffect(() => {
@@ -114,6 +125,9 @@ export function InterviewPage() {
     );
   }
 
+  // Model is ready once it has spoken at least once
+  const modelReady = transcript.some((e) => e.role === "model");
+
   // Live interview UI
   return (
     <div className="flex h-[calc(100vh-5rem)] flex-col">
@@ -138,22 +152,48 @@ export function InterviewPage() {
         </div>
 
         <div className="flex items-center gap-4">
+          {videoStream && (
+            <div className="relative h-[48px] w-[64px] overflow-hidden rounded-md border border-border">
+              <video
+                ref={setCameraRef}
+                autoPlay
+                playsInline
+                muted
+                className="h-full w-full object-cover mirror"
+                style={{ transform: "scaleX(-1)" }}
+              />
+              <Video className="absolute bottom-0.5 right-0.5 h-3 w-3 text-white/70" />
+            </div>
+          )}
           <span className="font-mono text-lg text-foreground">
             {formatTime(elapsedMs)}
           </span>
-          <span className="flex items-center gap-1.5 text-xs text-emerald-400">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            Live
-          </span>
+          {modelReady ? (
+            <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Live
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-xs text-amber-400">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Setting up
+            </span>
+          )}
         </div>
       </div>
 
       {/* Transcript feed */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {transcript.length === 0 && (
-          <p className="text-center text-sm text-muted-foreground py-12">
-            Waiting for the interviewer to begin...
-          </p>
+        {!modelReady && (
+          <div className="flex flex-col items-center gap-3 py-16">
+            <Loader2 className="h-8 w-8 animate-spin text-quaternary" />
+            <p className="text-sm text-muted-foreground">
+              {persona?.name ?? "AI Interviewer"} is preparing your interview...
+            </p>
+            <p className="text-xs text-muted-foreground/60">
+              Your mic is muted until the interviewer starts
+            </p>
+          </div>
         )}
         {transcript.map((entry, i) => (
           <div
@@ -177,12 +217,17 @@ export function InterviewPage() {
       {/* Control bar */}
       <div className="flex items-center justify-between border-t border-border px-4 py-4">
         <Button
-          variant={isMuted ? "destructive" : "outline"}
+          variant={isMuted || !modelReady ? "destructive" : "outline"}
           size="lg"
           onClick={toggleMute}
+          disabled={!modelReady}
           className="gap-2"
         >
-          {isMuted ? (
+          {!modelReady ? (
+            <>
+              <MicOff className="h-5 w-5" /> Mic off
+            </>
+          ) : isMuted ? (
             <>
               <MicOff className="h-5 w-5" /> Unmute
             </>

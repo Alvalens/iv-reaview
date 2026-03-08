@@ -9,6 +9,9 @@ import {
   TrendingDown,
   MessageSquare,
   Target,
+  Mic,
+  Eye,
+  Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
@@ -172,9 +175,12 @@ function QuestionCard({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className={`grid gap-3 ${q.nonVerbalScore !== null ? "grid-cols-3" : "grid-cols-2"}`}>
             <ScoreBar score={q.contentScore} label="Content" />
             <ScoreBar score={q.deliveryScore} label="Delivery" />
+            {q.nonVerbalScore !== null && (
+              <ScoreBar score={q.nonVerbalScore} label="Non-Verbal" />
+            )}
           </div>
 
           {q.feedback && (
@@ -185,6 +191,56 @@ function QuestionCard({
               <p className="text-sm text-foreground/80 leading-relaxed">
                 {q.feedback}
               </p>
+            </div>
+          )}
+
+          {q.deliveryFeedback && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Mic className="h-3 w-3 text-muted-foreground" />
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Delivery Feedback
+                </p>
+              </div>
+              <p className="text-sm text-foreground/80 leading-relaxed">
+                {q.deliveryFeedback}
+              </p>
+            </div>
+          )}
+
+          {q.nonVerbalFeedback && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Eye className="h-3 w-3 text-muted-foreground" />
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Non-Verbal Feedback
+                </p>
+              </div>
+              <p className="text-sm text-foreground/80 leading-relaxed">
+                {q.nonVerbalFeedback}
+              </p>
+            </div>
+          )}
+
+          {q.speechMetrics && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Activity className="h-3 w-3 text-muted-foreground" />
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  Speech Metrics
+                </p>
+              </div>
+              <div className="flex gap-4 text-xs">
+                <span className="rounded-md bg-secondary px-2.5 py-1.5 text-foreground/80">
+                  {q.speechMetrics.wordsPerMinute} wpm
+                </span>
+                <span className="rounded-md bg-secondary px-2.5 py-1.5 text-foreground/80">
+                  {q.speechMetrics.fillerCount} fillers
+                </span>
+                <span className="rounded-md bg-secondary px-2.5 py-1.5 text-foreground/80">
+                  {q.speechMetrics.pauseCount} pauses
+                </span>
+              </div>
             </div>
           )}
         </div>
@@ -211,38 +267,13 @@ export function ResultsPage() {
         if (cancelled) return;
         setSession(s);
 
-        // If already scored, parse from session
-        if (s.status === "SCORED" && s.overallScore !== null) {
+        // scoreSession handles all states: SCORED (cached), COMPLETED/SCORING (trigger + poll 202)
+        if (s.status === "SCORED" || s.status === "COMPLETED" || s.status === "SCORING") {
           const result = await api.scoreSession(id!);
           if (cancelled) return;
           setScores(result);
           setLoading(false);
           return;
-        }
-
-        // If completed, trigger scoring
-        if (s.status === "COMPLETED") {
-          const result = await api.scoreSession(id!);
-          if (cancelled) return;
-          setScores(result);
-          setLoading(false);
-          return;
-        }
-
-        // If scoring in progress, poll
-        if (s.status === "SCORING") {
-          const poll = setInterval(async () => {
-            const updated = (await api.getSession(id!)) as InterviewSession;
-            if (updated.status === "SCORED") {
-              clearInterval(poll);
-              const result = await api.scoreSession(id!);
-              if (!cancelled) {
-                setScores(result);
-                setLoading(false);
-              }
-            }
-          }, 2000);
-          return () => clearInterval(poll);
         }
 
         // Other states
@@ -365,6 +396,9 @@ export function ResultsPage() {
           />
           <ScoreRing score={scores.contentScore} label="Content" />
           <ScoreRing score={scores.deliveryScore} label="Delivery" />
+          {scores.nonVerbalScore !== null && (
+            <ScoreRing score={scores.nonVerbalScore} label="Non-Verbal" />
+          )}
         </div>
       </div>
 

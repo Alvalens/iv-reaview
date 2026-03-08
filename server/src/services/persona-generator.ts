@@ -104,19 +104,23 @@ export function getRandomVoice(): string {
   return RANDOM_VOICES[Math.floor(Math.random() * RANDOM_VOICES.length)];
 }
 
+/**
+ * Build the system instruction (persona identity + rules only).
+ * Keep this SHORT — Gemini Live API silently hangs with long system instructions
+ * in audio-only mode (known bug). Job/CV context is sent separately via
+ * sendClientContent after setup.
+ */
 export function buildSystemPrompt(
   persona: PersonaConfig,
   opts: {
     jobTitle: string;
     companyName: string;
-    jobDescription: string;
     interviewType: InterviewType;
-    cvContent?: string;
   }
 ): string {
   const quirksBlock = persona.quirks.map((q) => `- ${q}`).join("\n");
 
-  let prompt = `You are ${persona.name}, ${persona.title} at ${persona.company}.
+  const prompt = `You are ${persona.name}, ${persona.title} at ${persona.company}.
 You are conducting a ${opts.interviewType} interview for a ${opts.jobTitle} position at ${opts.companyName}.
 
 ## Your Personality
@@ -128,28 +132,50 @@ ${persona.interviewStyle}
 ## Your Behavioral Quirks
 ${quirksBlock}
 
-## Job Context
-The candidate is interviewing for this role:
-- Position: ${opts.jobTitle}
-- Company: ${opts.companyName}
-- Job Description: ${opts.jobDescription}`;
-
-  if (opts.cvContent) {
-    prompt += `
-
-## Candidate's CV
-${opts.cvContent}`;
-  }
-
-  prompt += `
-
 ## Rules
 - Stay in character at all times
 - Ask one question at a time and wait for the response
 - Keep the conversation natural — this is a real-time voice interview
 - Adapt your questions based on the candidate's responses
 - Cover 5-7 questions in the session
-- When the session is ending, wrap up naturally`;
+- When the session is ending, wrap up naturally
+- Reference the job context and candidate CV provided in the conversation when asking questions`;
+
+  console.log(`[Prompt] System instruction: ${prompt.length} chars (~${Math.ceil(prompt.length / 4)} tokens)`);
 
   return prompt;
+}
+
+/**
+ * Build context message with job description + CV to send via sendClientContent
+ * after the Live API session is established. This avoids the system instruction
+ * length limit that causes the model to silently hang.
+ */
+export function buildContextMessage(opts: {
+  jobTitle: string;
+  companyName: string;
+  jobDescription: string;
+  cvContent?: string;
+}): string {
+  let context = `Here is the job context for this interview:
+
+## Position: ${opts.jobTitle} at ${opts.companyName}
+
+## Job Description
+${opts.jobDescription}`;
+
+  if (opts.cvContent) {
+    context += `
+
+## Candidate's CV
+${opts.cvContent}`;
+  }
+
+  context += `
+
+Use this context to ask relevant, tailored interview questions. Start by greeting the candidate and introducing yourself.`;
+
+  console.log(`[Prompt] Context message: ${context.length} chars (~${Math.ceil(context.length / 4)} tokens)`);
+
+  return context;
 }
