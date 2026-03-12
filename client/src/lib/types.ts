@@ -23,7 +23,7 @@ export interface PersonaConfig {
   interviewStyle: string;
   quirks: string[];
   avatar: {
-    emoji: string;
+    icon: React.ComponentType;
     color: string;
     gradient: string;
   };
