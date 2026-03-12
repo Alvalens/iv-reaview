@@ -10,9 +10,6 @@ export type SessionStatus =
 // Interview type
 export type InterviewType = "HR" | "TECHNICAL";
 
-// Difficulty level
-export type Difficulty = "easy" | "medium" | "hard";
-
 // Persona configuration
 export interface PersonaConfig {
   id: string;
@@ -21,7 +18,7 @@ export interface PersonaConfig {
   company: string;
   personality: string;
   industry: string;
-  difficulty: Difficulty;
+  tone: string;
   voiceName: string;
   interviewStyle: string;
   quirks: string[];
@@ -50,12 +47,50 @@ export interface CreateSessionRequest {
   duration?: number;
 }
 
+// Per-question scoring result from Gemini (internal)
+export interface QuestionScoringResult {
+  contentMark: number;
+  deliveryMark: number | null;
+  nonVerbalMark: number | null;
+  suggestion: string;
+  reason: string;
+  deliveryFeedback: string | null;
+  nonVerbalFeedback: string | null;
+  speechMetrics: {
+    wordsPerMinute: number;
+    fillerCount: number;
+    pauseCount: number;
+  } | null;
+  /** Accurate transcription of user's answer from audio (replaces streaming ASR) */
+  transcribedAnswer: string;
+}
+
+// Per-question accumulated media during live session (in-memory)
+export interface QuestionMedia {
+  questionIndex: number;
+  question: string;
+  answerText: string;
+  audioPcmChunks: Buffer[];
+  videoSnapshots: string[];
+}
+
+// Scoring context cached from DB at session connect time
+export interface ScoringContext {
+  interviewType: InterviewType;
+  jobTitle: string;
+  companyName: string;
+  jobDescription: string;
+  personaName: string;
+  personaStyle: string;
+  cvContent?: string;
+}
+
 // Scoring result
 export interface ScoringResult {
   overallScore: number;
   contentScore: number;
   deliveryScore: number;
-  nonVerbalScore: number;
+  nonVerbalScore: number | null;
   narrative: string;
   strengths: Array<{ category: string; description: string }>;
   weaknesses: Array<{
@@ -69,8 +104,15 @@ export interface ScoringResult {
     answer: string;
     contentScore: number;
     deliveryScore: number;
-    nonVerbalScore: number;
+    nonVerbalScore: number | null;
     feedback: string;
+    deliveryFeedback: string | null;
+    nonVerbalFeedback: string | null;
+    speechMetrics: {
+      wordsPerMinute: number;
+      fillerCount: number;
+      pauseCount: number;
+    } | null;
   }>;
 }
 

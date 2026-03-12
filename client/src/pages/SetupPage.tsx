@@ -3,97 +3,77 @@ import { useNavigate } from "react-router-dom";
 import { PERSONAS, RANDOM_PERSONA } from "@/lib/personas";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import {
-    Sparkles,
-    Building2,
-    Briefcase,
-    FileText,
-    ArrowRight,
-    ArrowLeft,
-    CheckCircle2,
-    Brain,
-    Users,
-    Loader2,
-    Upload,
-    X,
-    File,
-    AlertCircle,
-    Clock,
-    Zap
-} from "lucide-react";
+import { Upload, FileText, X, Loader2 } from "lucide-react";
 
 export function SetupPage() {
-    const navigate = useNavigate();
-    const allPersonas = [...PERSONAS, RANDOM_PERSONA];
-    const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+  const allPersonas = [...PERSONAS, RANDOM_PERSONA];
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-    const [currentStep, setCurrentStep] = useState(1);
-    const [selectedPersona, setSelectedPersona] = useState<string | null>(null);
-    const [jobTitle, setJobTitle] = useState("");
-    const [companyName, setCompanyName] = useState("");
-    const [jobDescription, setJobDescription] = useState("");
-    const [interviewType, setInterviewType] = useState<"HR" | "TECHNICAL">("HR");
-    const [cvContent, setCvContent] = useState("");
-    const [cvFileName, setCvFileName] = useState<string | null>(null);
-    const [cvExtracting, setCvExtracting] = useState(false);
-    const [cvError, setCvError] = useState<string | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [dragOver, setDragOver] = useState(false);
+  const [selectedPersona, setSelectedPersona] = useState<string | null>(null);
+  const [jobTitle, setJobTitle] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [jobDescription, setJobDescription] = useState("");
+  const [interviewType, setInterviewType] = useState<"HR" | "TECHNICAL">("HR");
+  const [cvContent, setCvContent] = useState("");
+  const [cvFileName, setCvFileName] = useState<string | null>(null);
+  const [cvExtracting, setCvExtracting] = useState(false);
+  const [cvError, setCvError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
-    const steps = [
-        { number: 1, title: "Interviewer", icon: Users },
-        { number: 2, title: "Job Details", icon: Briefcase },
-        { number: 3, title: "Review", icon: CheckCircle2 }
-    ];
+  const canSubmit =
+    selectedPersona &&
+    jobTitle.trim() &&
+    companyName.trim() &&
+    jobDescription.trim() &&
+    !loading &&
+    !cvExtracting;
 
-    const canProceedStep1 = selectedPersona !== null;
-    const canProceedStep2 = jobTitle.trim() && companyName.trim() && jobDescription.trim();
-    const canSubmit = canProceedStep1 && canProceedStep2 && !loading && !cvExtracting;
-
-    const handleCVFile = useCallback(async (file: File) => {
-        if (file.type !== "application/pdf") {
-            setCvError("Only PDF files are accepted");
-            return;
-        }
-        if (file.size > 5 * 1024 * 1024) {
-            setCvError("File too large (max 5MB)");
-            return;
-        }
-
-        setCvError(null);
-        setCvExtracting(true);
-        setCvFileName(file.name);
-
-        try {
-            const result = await api.extractCV(file);
-            setCvContent(result.content);
-        } catch (err) {
-            setCvError(err instanceof Error ? err.message : "Extraction failed");
-            setCvFileName(null);
-        } finally {
-            setCvExtracting(false);
-        }
-    }, []);
-
-    function handleDrop(e: React.DragEvent) {
-        e.preventDefault();
-        setDragOver(false);
-        const file = e.dataTransfer.files[0];
-        if (file) handleCVFile(file);
+  const handleCVFile = useCallback(async (file: File) => {
+    if (file.type !== "application/pdf") {
+      setCvError("Only PDF files are accepted");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setCvError("File too large (max 5MB)");
+      return;
     }
 
-    function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
-        const file = e.target.files?.[0];
-        if (file) handleCVFile(file);
-    }
+    setCvError(null);
+    setCvExtracting(true);
+    setCvFileName(file.name);
 
-    function clearCV() {
-        setCvContent("");
-        setCvFileName(null);
-        setCvError(null);
-        if (fileInputRef.current) fileInputRef.current.value = "";
+    try {
+      const result = await api.extractCV(file);
+      setCvContent(result.content);
+    } catch (err) {
+      setCvError(err instanceof Error ? err.message : "Extraction failed");
+      setCvFileName(null);
+    } finally {
+      setCvExtracting(false);
     }
+  }, []);
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleCVFile(file);
+  }
+
+  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) handleCVFile(file);
+  }
+
+  function clearCV() {
+    setCvContent("");
+    setCvFileName(null);
+    setCvError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
 
     async function handleSubmit() {
         if (!canSubmit) return;
@@ -131,159 +111,184 @@ export function SetupPage() {
                     </p>
                 </div>
 
-                {/* Progress Steps */}
-                <div className="mb-10">
-                    <div className="flex items-center justify-center gap-2">
-                        {steps.map((step, index) => {
-                            const isActive = currentStep === step.number;
-                            const isCompleted = currentStep > step.number;
-                            const StepIcon = step.icon;
-
-                            return (
-                                <div key={step.number} className="flex items-center">
-                                    <div className="flex flex-col items-center">
-                                        <div
-                                            className={`flex h-12 w-12 items-center justify-center rounded-full transition-all duration-300 ${isCompleted
-                                                ? "bg-linear-to-br from-[#22C55E] to-[#16A34A] shadow-lg shadow-[#22C55E]/20"
-                                                : isActive
-                                                    ? "bg-linear-to-br from-[#1FB6FF] to-[#0EA5E9] shadow-lg shadow-[#1FB6FF]/30 ring-4 ring-[#1FB6FF]/20"
-                                                    : "bg-[#0F2A44] border-2 border-[#1E3A5F]"
-                                                }`}
-                                        >
-                                            {isCompleted ? (
-                                                <CheckCircle2 className="h-5 w-5 text-white" />
-                                            ) : (
-                                                <StepIcon className={`h-5 w-5 ${isActive ? "text-white" : "text-[#64748B]"}`} />
-                                            )}
-                                        </div>
-                                        <span className={`mt-2 text-xs font-medium ${isActive ? "text-[#1FB6FF]" : isCompleted ? "text-[#22C55E]" : "text-[#64748B]"}`}>
-                                            {step.title}
-                                        </span>
-                                    </div>
-                                    {index < steps.length - 1 && (
-                                        <div className={`h-0.5 w-16 mx-2 transition-all duration-300 ${isCompleted ? "bg-[#22C55E]" : "bg-[#1E3A5F]"
-                                            }`} />
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
+      {/* Persona selection */}
+      <div className="space-y-4">
+        <h2 className="text-lg font-semibold text-foreground">
+          Choose your interviewer
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {allPersonas.map((persona) => {
+            const isSelected = selectedPersona === persona.id;
+            return (
+              <div
+                key={persona.id}
+                onClick={() => setSelectedPersona(persona.id)}
+                className={`cursor-pointer rounded-xl border p-4 transition-all ${
+                  isSelected
+                    ? "border-quaternary ring-2 ring-quaternary bg-secondary"
+                    : "border-border bg-card hover:border-quaternary/50"
+                }`}
+              >
+                <div
+                  className={`mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br ${persona.avatar.gradient}`}
+                >
+                  <span className="text-2xl">{persona.avatar.emoji}</span>
                 </div>
+                <h3 className="font-semibold text-foreground">
+                  {persona.name}
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  {persona.title}
+                </p>
+                <p className="mt-1 text-xs text-quaternary">
+                  {persona.interviewStyle}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
-                {/* Step Content */}
-                <div className="relative">
-                    {/* Step 1: Choose Interviewer */}
-                    {currentStep === 1 && (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            <div className="rounded-2xl bg-linear-to-b from-[#0F2A44] to-[#0A1F33] p-8 border border-[#1E3A5F]/50 shadow-2xl">
-                                <div className="mb-6">
-                                    <h2 className="text-2xl font-bold text-[#F1F5F9] mb-2 flex items-center gap-2">
-                                        <Users className="h-6 w-6 text-[#1FB6FF]" />
-                                        Choose Your AI Interviewer
-                                    </h2>
-                                    <p className="text-[#94A3B8]">
-                                        Select an interviewer persona that matches your interview style preference
-                                    </p>
-                                </div>
+      {/* Job Details form */}
+      <div className="space-y-4">
+        <h2 className="text-lg font-semibold text-foreground">Job Details</h2>
+        <div className="rounded-xl border border-border bg-card p-6 space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">
+                Job Title <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="text"
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                placeholder="e.g. Software Engineer"
+                className={inputClass}
+              />
+            </div>
 
-                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                                    {allPersonas.map((persona) => {
-                                        const isSelected = selectedPersona === persona.id;
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">
+                Company Name <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="text"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                placeholder="e.g. Google"
+                className={inputClass}
+              />
+            </div>
+          </div>
 
-                                        return (
-                                            <div
-                                                key={persona.id}
-                                                onClick={() => setSelectedPersona(persona.id)}
-                                                className={`group cursor-pointer rounded-xl p-5 transition-all duration-300 ${isSelected
-                                                    ? "bg-linear-to-br from-[#1FB6FF]/20 to-[#0EA5E9]/10 border-2 border-[#1FB6FF] shadow-lg shadow-[#1FB6FF]/20 scale-105"
-                                                    : "bg-[#0A1F33] border-2 border-[#1E3A5F] hover:border-[#1FB6FF]/50 hover:shadow-lg hover:shadow-[#1FB6FF]/10"
-                                                    }`}
-                                            >
-                                                <div
-                                                    className={`mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br ${persona.avatar.gradient} shadow-lg transition-transform duration-300 ${isSelected ? "scale-110" : "group-hover:scale-105"
-                                                        }`}
-                                                >
-                                                    <span className="text-3xl">{<persona.avatar.icon />}</span>
-                                                </div>
-                                                <h3 className="font-bold text-[#F1F5F9] text-lg mb-1">
-                                                    {persona.name}
-                                                </h3>
-                                                <p className="text-sm text-[#94A3B8] mb-3">
-                                                    {persona.title}
-                                                </p>
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-xs text-[#64748B]">
-                                                        {persona.interviewStyle}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              Job Description <span className="text-destructive">*</span>
+            </label>
+            <textarea
+              value={jobDescription}
+              onChange={(e) => setJobDescription(e.target.value)}
+              placeholder="Paste the job description or key responsibilities..."
+              rows={4}
+              className={inputClass + " resize-none"}
+            />
+          </div>
 
-                            <div className="flex justify-end">
-                                <Button
-                                    onClick={() => setCurrentStep(2)}
-                                    disabled={!canProceedStep1}
-                                    className="bg-linear-to-r from-[#1FB6FF] to-[#0EA5E9] hover:from-[#0EA5E9] hover:to-[#1FB6FF] text-white font-semibold px-8 py-6 rounded-xl shadow-lg shadow-[#1FB6FF]/30 transition-all duration-300 hover:shadow-[#1FB6FF]/50 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                                >
-                                    Continue
-                                    <ArrowRight className="ml-2 h-5 w-5" />
-                                </Button>
-                            </div>
-                        </div>
-                    )}
+          {/* CV Upload */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              CV / Resume{" "}
+              <span className="text-muted-foreground font-normal">
+                (optional — PDF upload or paste text)
+              </span>
+            </label>
 
-                    {/* Step 2: Job Details */}
-                    {currentStep === 2 && (
-                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            <div className="rounded-2xl bg-linear-to-b from-[#0F2A44] to-[#0A1F33] p-8 border border-[#1E3A5F]/50 shadow-2xl">
-                                <div className="mb-6">
-                                    <h2 className="text-2xl font-bold text-[#F1F5F9] mb-2 flex items-center gap-2">
-                                        <Briefcase className="h-6 w-6 text-[#1FB6FF]" />
-                                        Job Information
-                                    </h2>
-                                    <p className="text-[#94A3B8]">
-                                        Provide details about the role you're interviewing for
-                                    </p>
-                                </div>
+            {!cvContent && !cvExtracting ? (
+              <>
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                  onDragLeave={() => setDragOver(false)}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`cursor-pointer rounded-lg border-2 border-dashed p-6 text-center transition-colors ${
+                    dragOver
+                      ? "border-quaternary bg-quaternary/5"
+                      : "border-border hover:border-quaternary/50"
+                  }`}
+                >
+                  <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Drag & drop your CV (PDF) or{" "}
+                    <span className="text-quaternary underline">browse</span>
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground/60">
+                    Max 5MB. Text will be extracted automatically.
+                  </p>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleFileInput}
+                  className="hidden"
+                />
+                <p className="mt-2 text-center text-xs text-muted-foreground">
+                  or paste your CV text below
+                </p>
+                <textarea
+                  value={cvContent}
+                  onChange={(e) => setCvContent(e.target.value)}
+                  placeholder="Paste your CV or resume content..."
+                  rows={3}
+                  className={inputClass + " mt-1 resize-none"}
+                />
+              </>
+            ) : cvExtracting ? (
+              <div className="flex items-center gap-3 rounded-lg border border-border bg-primary p-4">
+                <Loader2 className="h-5 w-5 animate-spin text-quaternary" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Extracting text from {cvFileName}...
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Using AI to parse your CV
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border bg-primary p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-5 w-5 text-quaternary" />
+                    <span className="text-sm font-medium text-foreground">
+                      {cvFileName ?? "CV text"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      ({cvContent.length} chars extracted)
+                    </span>
+                  </div>
+                  <button
+                    onClick={clearCV}
+                    className="rounded p-1 text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-2 max-h-32 overflow-y-auto rounded bg-secondary p-3">
+                  <pre className="whitespace-pre-wrap text-xs text-muted-foreground">
+                    {cvContent.substring(0, 500)}
+                    {cvContent.length > 500 ? "..." : ""}
+                  </pre>
+                </div>
+              </div>
+            )}
 
-                                <div className="space-y-6">
-                                    {/* Job Title & Company Name Row */}
-                                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                                        <div className="group">
-                                            <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#F1F5F9]">
-                                                <Briefcase className="h-4 w-4 text-[#1FB6FF]" />
-                                                Job Title
-                                                <span className="text-[#EF4444]">*</span>
-                                            </label>
-                                            <input
-                                                type="text"
-                                                value={jobTitle}
-                                                onChange={(e) => setJobTitle(e.target.value)}
-                                                placeholder="e.g., Senior Software Engineer"
-                                                className="w-full rounded-xl bg-[#0A1F33] border-2 border-[#1E3A5F] px-5 py-4 text-[#F1F5F9] placeholder:text-[#64748B] focus:border-[#1FB6FF] focus:outline-none focus:ring-4 focus:ring-[#1FB6FF]/20 transition-all duration-300"
-                                            />
-                                            <p className="mt-1.5 text-xs text-[#64748B]">The position you're applying for</p>
-                                        </div>
-
-                                        <div className="group">
-                                            <label className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#F1F5F9]">
-                                                <Building2 className="h-4 w-4 text-[#1FB6FF]" />
-                                                Company Name
-                                                <span className="text-[#EF4444]">*</span>
-                                            </label>
-                                            <input
-                                                type="text"
-                                                value={companyName}
-                                                onChange={(e) => setCompanyName(e.target.value)}
-                                                placeholder="e.g., Google, Microsoft, Apple"
-                                                className="w-full rounded-xl bg-[#0A1F33] border-2 border-[#1E3A5F] px-5 py-4 text-[#F1F5F9] placeholder:text-[#64748B] focus:border-[#1FB6FF] focus:outline-none focus:ring-4 focus:ring-[#1FB6FF]/20 transition-all duration-300"
-                                            />
-                                            <p className="mt-1.5 text-xs text-[#64748B]">The company you're interviewing with</p>
-                                        </div>
-                                    </div>
+            {cvError && (
+              <p className="mt-1 text-sm text-destructive">{cvError}</p>
+            )}
+          </div>
+        </div>
+      </div>
 
                                     {/* Interview Type Toggle */}
                                     <div className="group">

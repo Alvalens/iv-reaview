@@ -1,10 +1,13 @@
 import type { WebSocket } from "ws";
 import { prisma } from "../db/prisma.js";
-import { buildSystemPrompt } from "../services/persona-generator.js";
+import {
+  buildSystemPrompt,
+  buildContextMessage,
+} from "../services/persona-generator.js";
 import {
   connectToGemini,
   sendAudioToGemini,
-  sendVideoToGemini,
+  sendContextToGemini,
   closeGeminiSession,
   type GeminiLiveCallbacks,
 } from "../services/gemini-live.js";
@@ -22,6 +25,7 @@ import type {
   PersonaConfig,
   InterviewType,
 } from "../types/index.js";
+import { scoreQuestion } from "../services/scoring.js";
 
 function sendToClient(ws: WebSocket, msg: ServerWSMessage): void {
   if (ws.readyState === ws.OPEN) {
@@ -65,13 +69,19 @@ export async function handleWebSocketConnection(
     return;
   }
 
-  // Build system prompt from persona + job context
+  // Build system instruction (short — persona + rules only)
+  // Job description + CV sent separately via sendClientContent after setup
+  // to avoid Gemini Live API silent hang bug with long system instructions
   const persona: PersonaConfig = JSON.parse(dbSession.personaConfig);
   const systemPrompt = buildSystemPrompt(persona, {
     jobTitle: dbSession.jobTitle,
     companyName: dbSession.companyName,
-    jobDescription: dbSession.jobDescription,
     interviewType: dbSession.interviewType as InterviewType,
+  });
+  const contextMessage = buildContextMessage({
+    jobTitle: dbSession.jobTitle,
+    companyName: dbSession.companyName,
+    jobDescription: dbSession.jobDescription,
     cvContent: dbSession.cvContent ?? undefined,
   });
 
@@ -89,6 +99,19 @@ export async function handleWebSocketConnection(
     pendingModelText: "",
     modelSpeaking: false,
     modelSpeakingTimeout: null,
+    currentQuestionIndex: 0,
+    currentTurnAudioChunks: [],
+    currentTurnVideoSnapshots: [],
+    scoringContext: {
+      interviewType: dbSession.interviewType as InterviewType,
+      jobTitle: dbSession.jobTitle,
+      companyName: dbSession.companyName,
+      jobDescription: dbSession.jobDescription,
+      personaName: persona.name,
+      personaStyle: persona.interviewStyle,
+      cvContent: dbSession.cvContent ?? undefined,
+    },
+    audioForwardingEnabled: false,
   };
   setActiveSession(sessionId, active);
 
@@ -103,6 +126,11 @@ export async function handleWebSocketConnection(
       callbacks: geminiCallbacks,
     });
     active.geminiSession = geminiSession;
+
+    // Send job description + CV as context after connection is established.
+    // This avoids the Gemini Live API bug where long system instructions
+    // cause the model to silently hang in audio-only mode.
+    sendContextToGemini(geminiSession, contextMessage);
   } catch (err) {
     console.error(
       `[WS] Failed to connect to Gemini for session ${sessionId}:`,
@@ -122,6 +150,17 @@ export async function handleWebSocketConnection(
   let audioByteTotal = 0;
   let lastAudioLogTime = 0;
 
+  // Grace period: don't forward mic audio until model starts speaking or 3s passes.
+  // This lets the model process the system prompt and start its greeting
+  // without misinterpreting ambient mic noise as "user is speaking".
+  setTimeout(() => {
+    const s = getActiveSession(sessionId);
+    if (s && !s.audioForwardingEnabled) {
+      s.audioForwardingEnabled = true;
+      console.log(`[WS] Audio forwarding enabled (timeout) for session ${sessionId}`);
+    }
+  }, 3000);
+
   ws.on("message", (data, isBinary) => {
     const session = getActiveSession(sessionId);
     if (!session?.geminiSession || session.status !== "live") return;
@@ -131,6 +170,13 @@ export async function handleWebSocketConnection(
       const buffer = data as Buffer;
       audioChunkCount++;
       audioByteTotal += buffer.length;
+
+      // Grace period: skip forwarding audio until model has started speaking
+      if (!session.audioForwardingEnabled) {
+        // Still buffer for per-question scoring
+        session.currentTurnAudioChunks.push(Buffer.from(buffer));
+        return;
+      }
 
       // Audio gating: don't forward mic audio while model is speaking
       // This prevents echo feedback where the model hears its own output
@@ -151,6 +197,9 @@ export async function handleWebSocketConnection(
         );
         lastAudioLogTime = now;
       }
+
+      // Buffer audio for per-question scoring
+      session.currentTurnAudioChunks.push(Buffer.from(buffer));
 
       const base64 = buffer.toString("base64");
       sendAudioToGemini(session.geminiSession, base64);
@@ -192,7 +241,10 @@ function handleClientMessage(
       break;
 
     case "video":
-      sendVideoToGemini(session.geminiSession, msg.data);
+      // Accumulate video snapshots for per-question scoring (cap at 5 per turn)
+      if (session.currentTurnVideoSnapshots.length < 5) {
+        session.currentTurnVideoSnapshots.push(msg.data);
+      }
       break;
 
     case "control":
@@ -204,7 +256,85 @@ function handleClientMessage(
   }
 }
 
+// Flush accumulated user transcription text as a transcript entry
+function flushPendingUserText(sessionId: string): void {
+  const session = getActiveSession(sessionId);
+  if (!session || !session.pendingUserText.trim()) return;
+
+  const entry: TranscriptEntry = {
+    role: "user",
+    text: session.pendingUserText.trim(),
+    timestamp: Date.now() - session.startedAt,
+  };
+  session.transcript.push(entry);
+  sendToClient(session.clientWs, { type: "transcript", entry });
+  console.log(
+    `[Transcript] User (${session.transcript.length}): "${entry.text.slice(0, 80)}..."`
+  );
+  session.pendingUserText = "";
+}
+
+// Flush accumulated model transcription text as a transcript entry
+function flushPendingModelText(sessionId: string): void {
+  const session = getActiveSession(sessionId);
+  if (!session || !session.pendingModelText.trim()) return;
+
+  const fullText = session.pendingModelText.trim();
+  const entry: TranscriptEntry = {
+    role: "model",
+    text: fullText,
+    timestamp: Date.now() - session.startedAt,
+  };
+  session.transcript.push(entry);
+  sendToClient(session.clientWs, { type: "transcript", entry });
+  console.log(
+    `[Transcript] Model (${session.transcript.length}): "${fullText.slice(0, 80)}..."`
+  );
+  session.pendingModelText = "";
+
+  // Detect completed Q&A pair and fire per-question scoring
+  // Pattern: model question (has "?") → user answer → model next turn (current)
+  const t = session.transcript;
+  if (t.length >= 3) {
+    const modelQuestion = t[t.length - 3];
+    const userAnswer = t[t.length - 2];
+    if (
+      modelQuestion.role === "model" &&
+      modelQuestion.text.includes("?") &&
+      userAnswer.role === "user"
+    ) {
+      const qi = session.currentQuestionIndex;
+      const media = {
+        questionIndex: qi,
+        question: modelQuestion.text,
+        answerText: userAnswer.text,
+        audioPcmChunks: [...session.currentTurnAudioChunks],
+        videoSnapshots: [...session.currentTurnVideoSnapshots],
+      };
+      session.currentQuestionIndex++;
+      session.currentTurnAudioChunks = [];
+      session.currentTurnVideoSnapshots = [];
+
+      // Fire-and-forget per-question scoring
+      scoreQuestion(sessionId, media, session.scoringContext).catch((err) =>
+        console.error(`[Scoring] Q${qi} failed:`, err)
+      );
+    }
+  }
+
+  // Check for end keyword
+  if (fullText.includes("END_INTERVIEW")) {
+    console.log(
+      `[Gemini] END_INTERVIEW detected for session ${sessionId}`
+    );
+    cleanupSession(sessionId, "COMPLETED");
+  }
+}
+
 function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
+  let inputTranscriptCount = 0;
+  let outputTranscriptCount = 0;
+
   return {
     onSetupComplete: () => {
       const session = getActiveSession(sessionId);
@@ -231,6 +361,12 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
+      // Enable audio forwarding once model starts speaking (grace period over)
+      if (!session.audioForwardingEnabled) {
+        session.audioForwardingEnabled = true;
+        console.log(`[WS] Audio forwarding enabled (model spoke) for session ${sessionId}`);
+      }
+
       // Mark model as speaking — gates client mic audio to prevent echo
       session.modelSpeaking = true;
       if (session.modelSpeakingTimeout) {
@@ -249,17 +385,18 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
+      inputTranscriptCount++;
+      if (inputTranscriptCount <= 5) {
+        console.log(
+          `[Gemini] InputTranscription #${inputTranscriptCount}: "${text}" finished=${finished}`
+        );
+      }
+
       session.pendingUserText += text;
 
-      if (finished && session.pendingUserText.trim()) {
-        const entry: TranscriptEntry = {
-          role: "user",
-          text: session.pendingUserText.trim(),
-          timestamp: Date.now() - session.startedAt,
-        };
-        session.transcript.push(entry);
-        sendToClient(session.clientWs, { type: "transcript", entry });
-        session.pendingUserText = "";
+      // Flush if API sends finished flag (may or may not happen per API version)
+      if (finished) {
+        flushPendingUserText(sessionId);
       }
     },
 
@@ -267,26 +404,24 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
+      outputTranscriptCount++;
+      if (outputTranscriptCount <= 5) {
+        console.log(
+          `[Gemini] OutputTranscription #${outputTranscriptCount}: "${text}" finished=${finished}`
+        );
+      }
+
+      // When model starts outputting text, flush any pending user text first
+      // (the user finished speaking and now the model is responding)
+      if (session.pendingUserText.trim()) {
+        flushPendingUserText(sessionId);
+      }
+
       session.pendingModelText += text;
 
-      if (finished && session.pendingModelText.trim()) {
-        const fullText = session.pendingModelText.trim();
-        const entry: TranscriptEntry = {
-          role: "model",
-          text: fullText,
-          timestamp: Date.now() - session.startedAt,
-        };
-        session.transcript.push(entry);
-        sendToClient(session.clientWs, { type: "transcript", entry });
-        session.pendingModelText = "";
-
-        // Check for end keyword
-        if (fullText.includes("END_INTERVIEW")) {
-          console.log(
-            `[Gemini] END_INTERVIEW detected for session ${sessionId}`
-          );
-          cleanupSession(sessionId, "COMPLETED");
-        }
+      // Flush if API sends finished flag
+      if (finished) {
+        flushPendingModelText(sessionId);
       }
     },
 
@@ -301,13 +436,26 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
         session.modelSpeakingTimeout = null;
       }
 
+      // Flush any partial model text before clearing
+      flushPendingModelText(sessionId);
       session.pendingModelText = "";
+
+      // Discard partial audio/video for this interrupted turn
+      session.currentTurnAudioChunks = [];
+      session.currentTurnVideoSnapshots = [];
+
       sendToClient(session.clientWs, { type: "interrupt" });
     },
 
     onTurnComplete: () => {
       const session = getActiveSession(sessionId);
       if (!session) return;
+
+      // Flush any remaining pending transcription text
+      // This is the primary flush mechanism per Google's recommendation:
+      // buffer streaming chunks and flush on turnComplete
+      flushPendingUserText(sessionId);
+      flushPendingModelText(sessionId);
 
       // Model finished speaking — ungate mic after a short delay
       // to let residual echo from speakers die down
@@ -368,8 +516,11 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       const session = getActiveSession(sessionId);
       if (!session) return;
 
-      // Expected close during cleanup
-      if (session.status === "ending" || session.status === "closed") return;
+      // Expected close during cleanup or already reconnecting
+      if (session.status === "ending" || session.status === "closed" || session.status === "reconnecting") {
+        console.log(`[Gemini] Connection closed (expected, status=${session.status}) for session ${sessionId}`);
+        return;
+      }
 
       console.log(
         `[Gemini] Unexpected close for session ${sessionId}`
@@ -391,6 +542,13 @@ async function attemptReconnect(
   const session = getActiveSession(sessionId);
   if (!session) return;
 
+  // Prevent duplicate reconnects (GoAway + onClose both fire)
+  if (session.status === "reconnecting" || session.status === "ending" || session.status === "closed") {
+    console.log(`[Gemini] Skipping reconnect — session ${sessionId} already ${session.status}`);
+    return;
+  }
+
+  session.status = "reconnecting";
   console.log(`[Gemini] Attempting reconnect for session ${sessionId}`);
 
   // Close old Gemini session
@@ -408,8 +566,12 @@ async function attemptReconnect(
     const systemPrompt = buildSystemPrompt(session.persona, {
       jobTitle: dbSession.jobTitle,
       companyName: dbSession.companyName,
-      jobDescription: dbSession.jobDescription,
       interviewType: dbSession.interviewType as InterviewType,
+    });
+    const contextMsg = buildContextMessage({
+      jobTitle: dbSession.jobTitle,
+      companyName: dbSession.companyName,
+      jobDescription: dbSession.jobDescription,
       cvContent: dbSession.cvContent ?? undefined,
     });
 
@@ -422,6 +584,7 @@ async function attemptReconnect(
     });
 
     session.geminiSession = newGeminiSession;
+    sendContextToGemini(newGeminiSession, contextMsg);
     // onSetupComplete will fire and set status back to "live"
   } catch (err) {
     console.error(
@@ -458,6 +621,39 @@ async function cleanupSession(
   if (session.geminiSession) {
     closeGeminiSession(session.geminiSession);
     session.geminiSession = null;
+  }
+
+  // Flush any remaining pending transcription text before saving
+  flushPendingUserText(sessionId);
+  flushPendingModelText(sessionId);
+
+  // Score the last Q&A pair if it wasn't captured by the normal turn detection
+  // (session ended before model could ask the next question)
+  const t = session.transcript;
+  if (t.length >= 2) {
+    const last = t[t.length - 1];
+    const prev = t[t.length - 2];
+    if (
+      last.role === "user" &&
+      prev.role === "model" &&
+      prev.text.includes("?") &&
+      session.currentTurnAudioChunks.length > 0
+    ) {
+      const qi = session.currentQuestionIndex;
+      const media = {
+        questionIndex: qi,
+        question: prev.text,
+        answerText: last.text,
+        audioPcmChunks: [...session.currentTurnAudioChunks],
+        videoSnapshots: [...session.currentTurnVideoSnapshots],
+      };
+      session.currentTurnAudioChunks = [];
+      session.currentTurnVideoSnapshots = [];
+
+      scoreQuestion(sessionId, media, session.scoringContext).catch((err) =>
+        console.error(`[Scoring] Q${qi} (cleanup) failed:`, err)
+      );
+    }
   }
 
   // Save transcript to DB

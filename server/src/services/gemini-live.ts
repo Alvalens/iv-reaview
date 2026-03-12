@@ -81,10 +81,31 @@ export async function connectToGemini(opts: {
   return session;
 }
 
+let geminiMsgCount = 0;
+
 function handleGeminiMessage(
   msg: LiveServerMessage,
   cb: GeminiLiveCallbacks
 ): void {
+  geminiMsgCount++;
+
+  // Log first 10 messages and then every 50th to trace what Gemini sends
+  if (geminiMsgCount <= 10 || geminiMsgCount % 50 === 0) {
+    const keys = Object.keys(msg).filter(
+      (k) => (msg as unknown as Record<string, unknown>)[k] != null
+    );
+    console.log(`[Gemini] Msg #${geminiMsgCount} keys: [${keys.join(", ")}]`);
+
+    // For serverContent, log which sub-fields are present
+    if (msg.serverContent) {
+      const contentKeys = Object.keys(msg.serverContent).filter(
+        (k) =>
+          (msg.serverContent as unknown as Record<string, unknown>)[k] != null
+      );
+      console.log(`[Gemini]   serverContent keys: [${contentKeys.join(", ")}]`);
+    }
+  }
+
   // Setup complete
   if (msg.setupComplete) {
     cb.onSetupComplete();
@@ -175,6 +196,16 @@ export function sendVideoToGemini(
       data: jpegBase64,
       mimeType: "image/jpeg",
     },
+  });
+}
+
+export function sendContextToGemini(
+  session: Session,
+  contextText: string
+): void {
+  session.sendClientContent({
+    turns: [{ role: "user", parts: [{ text: contextText }] }],
+    turnComplete: true,
   });
 }
 

@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { prisma } from "../db/prisma.js";
-import { getPersona } from "../services/persona-generator.js";
+import { getPersona, generateRandomPersona } from "../services/persona-generator.js";
 import type { CreateSessionRequest } from "../types/index.js";
 
 export const sessionsRouter = Router();
@@ -24,14 +24,25 @@ sessionsRouter.post("/", async (req: Request, res: Response) => {
     return;
   }
 
-  const persona = getPersona(body.personaId);
-  if (!persona && body.personaId !== "random") {
-    res.status(400).json({ error: "Invalid personaId" });
-    return;
-  }
+  let selectedPersona;
 
-  // TODO: Handle random persona generation via Gemini API
-  const selectedPersona = persona ?? getPersona("sarah")!;
+  if (body.personaId === "random") {
+    try {
+      selectedPersona = await generateRandomPersona();
+    } catch (err) {
+      console.error("[Sessions] Random persona generation failed, falling back to predefined:", err);
+      // Fallback: randomly pick from predefined personas
+      const predefined = ["sarah", "david", "maya"];
+      const fallbackId = predefined[Math.floor(Math.random() * predefined.length)];
+      selectedPersona = getPersona(fallbackId)!;
+    }
+  } else {
+    selectedPersona = getPersona(body.personaId);
+    if (!selectedPersona) {
+      res.status(400).json({ error: "Invalid personaId" });
+      return;
+    }
+  }
 
   const session = await prisma.interviewSession.create({
     data: {

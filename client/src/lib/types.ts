@@ -8,7 +8,6 @@ export type SessionStatus =
   | "ERROR";
 
 export type InterviewType = "HR" | "TECHNICAL";
-export type Difficulty = "easy" | "medium" | "hard";
 
 // Persona config (mirrors server type)
 export interface PersonaConfig {
@@ -18,7 +17,7 @@ export interface PersonaConfig {
   company: string;
   personality: string;
   industry: string;
-  difficulty: Difficulty;
+  tone: string;
   voiceName: string;
   interviewStyle: string;
   quirks: string[];
@@ -74,4 +73,42 @@ export interface InterviewQuestion {
   deliveryScore: number | null;
   nonVerbalScore: number | null;
   feedback: string | null;
+  deliveryFeedback: string | null;
+  nonVerbalFeedback: string | null;
+  speechMetrics: {
+    wordsPerMinute: number;
+    fillerCount: number;
+    pauseCount: number;
+  } | null;
+}
+
+// Scoring result from POST /api/sessions/:id/score
+export interface ScoringResult {
+  overallScore: number;
+  contentScore: number;
+  deliveryScore: number;
+  nonVerbalScore: number | null;
+  narrative: string;
+  strengths: Array<{ category: string; description: string }>;
+  weaknesses: Array<{
+    category: string;
+    description: string;
+    priority: string;
+  }>;
+  questions: Array<{
+    questionIndex: number;
+    question: string;
+    answer: string;
+    contentScore: number;
+    deliveryScore: number;
+    nonVerbalScore: number | null;
+    feedback: string;
+    deliveryFeedback: string | null;
+    nonVerbalFeedback: string | null;
+    speechMetrics: {
+      wordsPerMinute: number;
+      fillerCount: number;
+      pauseCount: number;
+    } | null;
+  }>;
 }
