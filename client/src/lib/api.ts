@@ -2,14 +2,26 @@ import type { ScoringResult } from "./types";
 
 const API_BASE = "/api";
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem("token");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function request<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
+      ...getAuthHeaders(),
+      // Don't override Content-Type for FormData
+      ...(options?.body instanceof FormData ? {} : options?.headers),
     },
     ...options,
   });
@@ -42,7 +54,10 @@ export const api = {
     for (let i = 0; i < maxAttempts; i++) {
       const res = await fetch(`${API_BASE}/sessions/${id}/score`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}),
+        },
       });
 
       if (res.status === 202) {
@@ -65,8 +80,14 @@ export const api = {
   extractCV: async (file: File): Promise<{ content: string }> => {
     const formData = new FormData();
     formData.append("file", file);
+    const headers: Record<string, string> = {};
+    const token = localStorage.getItem("token");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
     const res = await fetch(`${API_BASE}/cv/extract`, {
       method: "POST",
+      headers,
       body: formData,
     });
     if (!res.ok) {
