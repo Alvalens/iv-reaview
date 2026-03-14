@@ -7,6 +7,7 @@ import { env } from "./config/env.js";
 import { sessionsRouter } from "./routes/sessions.js";
 import { cvRouter } from "./routes/cv.js";
 import { scoringRouter } from "./routes/scoring.js";
+import { authRouter } from "./routes/auth.js";
 import { handleWebSocketConnection } from "./websocket/proxy.js";
 
 const app = express();
@@ -24,6 +25,7 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/sessions", sessionsRouter);
 app.use("/api/sessions", scoringRouter);
 app.use("/api/cv", cvRouter);
+app.use("/api/auth", authRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ noServer: true });
