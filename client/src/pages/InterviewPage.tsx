@@ -48,16 +48,16 @@ export function InterviewPage() {
   // Parse persona config for display
   const persona = session
     ? (() => {
-        try {
-          return JSON.parse(session.personaConfig) as {
-            name: string;
-            interviewStyle: string;
-            avatar: { emoji: string; gradient: string };
-          };
-        } catch {
-          return null;
-        }
-      })()
+      try {
+        return JSON.parse(session.personaConfig) as {
+          name: string;
+          interviewStyle: string;
+          avatar: { emoji: string; gradient: string };
+        };
+      } catch {
+        return null;
+      }
+    })()
     : null;
 
   // Model is ready once it has spoken at least once
@@ -143,45 +143,48 @@ export function InterviewPage() {
       <div className="absolute inset-0 bg-gradient-to-b from-primary/30 via-primary/20 to-primary/40" />
 
       {/* Top bar */}
-      <div className="relative z-10 flex items-center justify-between border-b border-white/10 bg-black/20 px-4 py-3 backdrop-blur-md">
+      <div className="relative z-10 flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-black/40 via-black/20 to-black/40 px-6 py-3 backdrop-blur-xl">
         {/* Left: Interview info */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           {persona && (
             <div
-              className={`flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br ${persona.avatar.gradient}`}
+              className={`flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br shadow-lg ring-2 ring-white/10 ${persona.avatar.gradient}`}
             >
-              <span className="text-lg">{persona.avatar.emoji}</span>
+              <span className="text-xl">{persona.avatar.emoji}</span>
             </div>
           )}
           <div>
-            <h2 className="font-semibold text-white">
+            <h2 className="text-base font-semibold text-white">
               {persona?.name ?? "AI Interviewer"}
             </h2>
-            <p className="text-xs text-white/60">
-              {persona?.interviewStyle ?? ""}
-            </p>
+            {/* <p className="text-xs font-medium text-white/50">
+              {session?.jobTitle ?? ""} {session?.companyName ? `at ${session.companyName}` : ""}
+            </p> */}
           </div>
         </div>
 
         {/* Right: Timer + Status */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           {/* Duration pill */}
-          <div className="rounded-full bg-black/40 px-3 py-1.5">
-            <span className="font-mono text-sm text-white">
+          <div className="flex items-center gap-2 rounded-full bg-white/5 px-4 py-2 ring-1 ring-white/10">
+            <span className="font-mono text-sm font-medium text-white/80">
               {formatTime(elapsedMs)}
             </span>
           </div>
 
           {/* Live/Setting up indicator */}
           {modelReady ? (
-            <span className="flex items-center gap-1.5 rounded-full bg-red-500/20 px-3 py-1.5 text-xs font-medium text-red-400">
-              <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-              Live
+            <span className="flex items-center gap-2 rounded-full bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400 ring-1 ring-red-500/20">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500"></span>
+              </span>
+              LIVE
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 rounded-full bg-amber-500/20 px-3 py-1.5 text-xs text-amber-400">
+            <span className="flex items-center gap-2 rounded-full bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-400 ring-1 ring-amber-500/20">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Setting up
+              SETTING UP
             </span>
           )}
         </div>
@@ -222,7 +225,7 @@ export function InterviewPage() {
 
             {/* Current question displayed below avatar */}
             {currentQuestion && (
-              <div className="mt-4 max-w-md rounded-xl bg-white/10 px-4 py-3 text-center backdrop-blur-sm">
+              <div className="mt-4 max-w-3xl rounded-xl bg-white/10 px-4 py-3 text-center backdrop-blur-sm">
                 <p className="text-sm text-white/90">{currentQuestion}</p>
               </div>
             )}
@@ -238,33 +241,42 @@ export function InterviewPage() {
       </div>
 
       {/* Controls bar */}
-      <div className="relative z-10 flex items-center justify-center gap-3 border-t border-white/10 bg-black/40 px-4 py-4 backdrop-blur-md md:gap-4">
+      <div className="relative z-10 flex items-center justify-center gap-4 border-t border-white/5 bg-gradient-to-t from-black/60 via-black/40 to-transparent px-6 py-5 backdrop-blur-xl">
         {/* Mute button */}
-        <button
-          onClick={toggleMute}
-          disabled={!modelReady}
-          className={`group flex h-14 w-14 items-center justify-center rounded-full transition-all duration-200 hover:scale-105 disabled:opacity-50 ${
-            isMuted || !modelReady
-              ? "bg-red-500 hover:bg-red-600"
-              : "bg-white/10 hover:bg-white/20"
-          }`}
-          title={isMuted ? "Unmute" : "Mute"}
-        >
-          {isMuted || !modelReady ? (
-            <MicOff className="h-6 w-6 text-white" />
-          ) : (
-            <Mic className="h-6 w-6 text-white" />
-          )}
-        </button>
+        <div className="flex flex-col items-center gap-1">
+          <button
+            onClick={toggleMute}
+            disabled={!modelReady}
+            className={`group flex h-16 w-16 items-center justify-center rounded-full transition-all duration-200 hover:scale-105 disabled:opacity-50 ${isMuted || !modelReady
+              ? "bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/25"
+              : "bg-white/10 hover:bg-white/20 shadow-lg shadow-black/20"
+              }`}
+            title={isMuted ? "Unmute" : "Mute"}
+          >
+            {isMuted || !modelReady ? (
+              <MicOff className="h-7 w-7 text-white" />
+            ) : (
+              <Mic className="h-7 w-7 text-white" />
+            )}
+          </button>
+          <span className="text-xs font-medium text-white/60">
+            {isMuted || !modelReady ? "Unmute" : "Mute"}
+          </span>
+        </div>
 
         {/* End call button */}
-        <button
-          onClick={endSession}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500 transition-all duration-200 hover:scale-105 hover:bg-red-600"
-          title="End interview"
-        >
-          <PhoneOff className="h-6 w-6 text-white" />
-        </button>
+        <div className="flex flex-col items-center gap-1">
+          <button
+            onClick={endSession}
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500 shadow-lg shadow-red-500/25 transition-all duration-200 hover:scale-105 hover:bg-red-600"
+            title="End interview"
+          >
+            <PhoneOff className="h-7 w-7 text-white" />
+          </button>
+          <span className="text-xs font-medium text-white/60">
+            End
+          </span>
+        </div>
       </div>
     </div>
   );
