@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import { Mic, LogOut, User, ChevronDown } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { Button } from "@/components/ui/button";
 
 export function Header() {
   const { user, isAuthenticated, logout } = useAuth();

@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { prisma } from "../db/prisma.js";
 import { env } from "../config/env.js";
+import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
+import { authLimiter } from "../middleware/rate-limit.js";
 
 export const authRouter = Router();
 
@@ -22,8 +24,8 @@ interface JwtPayload {
   username: string;
 }
 
-// POST /api/auth/register — Register a new user
-authRouter.post("/register", async (req: Request, res: Response) => {
+// POST /api/auth/register — Register a new user (with rate limiting)
+authRouter.post("/register", authLimiter, async (req: Request, res: Response) => {
   try {
     const body = req.body as RegisterBody;
 
@@ -86,8 +88,8 @@ authRouter.post("/register", async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/login — Login user
-authRouter.post("/login", async (req: Request, res: Response) => {
+// POST /api/auth/login — Login user (with rate limiting)
+authRouter.post("/login", authLimiter, async (req: Request, res: Response) => {
   try {
     const body = req.body as LoginBody;
 
@@ -136,24 +138,11 @@ authRouter.post("/login", async (req: Request, res: Response) => {
 });
 
 // GET /api/auth/me — Get current user (protected)
-authRouter.get("/me", async (req: Request, res: Response) => {
+authRouter.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
-    // Get token from Authorization header
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.status(401).json({ error: "No token provided" });
-      return;
-    }
-
-    const token = authHeader.substring(7);
-
-    // Verify token
-    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-
-    // Get user from database
+    // Get user from database using authenticated user id from middleware
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
+      where: { id: req.user?.userId },
       select: {
         id: true,
         username: true,
@@ -168,10 +157,6 @@ authRouter.get("/me", async (req: Request, res: Response) => {
 
     res.json({ user });
   } catch (error) {
-    if (error instanceof jwt.JsonWebTokenError) {
-      res.status(401).json({ error: "Invalid token" });
-      return;
-    }
     console.error("[Auth] Get user error:", error);
     res.status(500).json({ error: "Internal server error" });
   }

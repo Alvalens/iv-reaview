@@ -1,9 +1,10 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 
 interface ProtectedRouteProps {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
@@ -25,7 +26,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 }
 
 interface GuestRouteProps {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 export function GuestRoute({ children }: GuestRouteProps) {

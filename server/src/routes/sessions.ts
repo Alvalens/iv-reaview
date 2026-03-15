@@ -11,6 +11,12 @@ sessionsRouter.use(authMiddleware);
 
 // POST /api/sessions — Create a new interview session
 sessionsRouter.post("/", async (req: AuthRequest, res: Response) => {
+  // Explicitly check for authenticated user
+  if (!req.user || !req.user.userId) {
+    res.status(500).json({ error: "Authenticated user context is missing" });
+    return;
+  }
+
   const body = req.body as CreateSessionRequest;
 
   if (!body.jobTitle || !body.companyName || !body.jobDescription) {
@@ -60,7 +66,7 @@ sessionsRouter.post("/", async (req: AuthRequest, res: Response) => {
       personaConfig: JSON.stringify(selectedPersona),
       voiceName: selectedPersona.voiceName,
       duration: body.duration ?? 600,
-      userId: req.user?.userId,
+      userId: req.user.userId,
     },
   });
 

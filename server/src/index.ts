@@ -9,7 +9,7 @@ import { cvRouter } from "./routes/cv.js";
 import { scoringRouter } from "./routes/scoring.js";
 import { authRouter } from "./routes/auth.js";
 import { handleWebSocketConnection } from "./websocket/proxy.js";
-import { globalLimiter, authLimiter } from "./middleware/rate-limit.js";
+import { globalLimiter } from "./middleware/rate-limit.js";
 import { wsRateLimiter } from "./middleware/websocket-rate-limit.js";
 
 const app = express();
@@ -27,8 +27,8 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Auth routes with stricter rate limiting
-app.use("/api/auth", authLimiter, authRouter);
+// Auth routes (rate limiting applied per-route in auth.ts for /login and /register only)
+app.use("/api/auth", authRouter);
 
 app.use("/api/sessions", sessionsRouter);
 app.use("/api/sessions", scoringRouter);

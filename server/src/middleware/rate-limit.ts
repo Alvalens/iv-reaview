@@ -2,20 +2,6 @@ import rateLimit from "express-rate-limit";
 import { rateLimitConfig } from "../config/rate-limit.js";
 
 /**
- * Per-IP rate limiter
- * Limits requests from each unique IP address
- * Uses default keyGenerator which properly handles IPv6
- */
-export const perIPLimiter = rateLimit({
-  windowMs: rateLimitConfig.perIP.windowMs,
-  max: rateLimitConfig.perIP.maxRequests,
-  message: { error: rateLimitConfig.perIP.message },
-  standardHeaders: rateLimitConfig.perIP.standardHeaders,
-  legacyHeaders: rateLimitConfig.perIP.legacyHeaders,
-  // Uses default keyGenerator which properly handles IPv4/IPv6
-});
-
-/**
  * Global rate limiter
  * Limits total requests across all IPs
  */

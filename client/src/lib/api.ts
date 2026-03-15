@@ -51,13 +51,11 @@ export const api = {
   scoreSession: async (id: string): Promise<ScoringResult> => {
     // Poll until scoring completes (server returns 202 while per-question scoring is running)
     const maxAttempts = 30;
+    const headers = getAuthHeaders();
     for (let i = 0; i < maxAttempts; i++) {
       const res = await fetch(`${API_BASE}/sessions/${id}/score`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}),
-        },
+        headers,
       });
 
       if (res.status === 202) {
@@ -80,14 +78,11 @@ export const api = {
   extractCV: async (file: File): Promise<{ content: string }> => {
     const formData = new FormData();
     formData.append("file", file);
-    const headers: Record<string, string> = {};
-    const token = localStorage.getItem("token");
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
     const res = await fetch(`${API_BASE}/cv/extract`, {
       method: "POST",
-      headers,
+      headers: {
+        ...getAuthHeaders(),
+      },
       body: formData,
     });
     if (!res.ok) {
