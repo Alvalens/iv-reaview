@@ -189,6 +189,15 @@ export async function handleWebSocketConnection(
         return;
       }
 
+      // Log when audio starts being forwarded after model was speaking
+      const lastChunkCount = (session as any).lastGatedChunkCount || 0;
+      if (audioChunkCount > lastChunkCount + 10) {
+        console.log(
+          `[WS] Audio forwarding resumed — chunk #${audioChunkCount} (was gated at #${lastChunkCount})`
+        );
+      }
+      (session as any).lastGatedChunkCount = audioChunkCount;
+
       // Log first 3 chunks and then every 5 seconds
       const now = Date.now();
       if (audioChunkCount <= 3 || now - lastAudioLogTime > 5000) {
@@ -386,16 +395,16 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       if (!session) return;
 
       inputTranscriptCount++;
-      if (inputTranscriptCount <= 5) {
-        console.log(
-          `[Gemini] InputTranscription #${inputTranscriptCount}: "${text}" finished=${finished}`
-        );
-      }
+      // Log ALL input transcriptions to debug delays
+      console.log(
+        `[Gemini] InputTranscription #${inputTranscriptCount}: "${text.slice(0, 50)}..." finished=${finished}`
+      );
 
       session.pendingUserText += text;
 
       // Flush if API sends finished flag (may or may not happen per API version)
       if (finished) {
+        console.log(`[Gemini] User speech finished, flushing transcription`);
         flushPendingUserText(sessionId);
       }
     },
@@ -418,6 +427,15 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       }
 
       session.pendingModelText += text;
+
+      // Send real-time partial transcription to client
+      const partialEntry: TranscriptEntry = {
+        role: "model",
+        text: session.pendingModelText,
+        timestamp: Date.now() - session.startedAt,
+        partial: true,
+      };
+      sendToClient(session.clientWs, { type: "transcript", entry: partialEntry });
 
       // Flush if API sends finished flag
       if (finished) {
@@ -462,10 +480,11 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       if (session.modelSpeakingTimeout) {
         clearTimeout(session.modelSpeakingTimeout);
       }
+      console.log(`[WS] AI finished speaking, will lift audio gate in 300ms`);
       session.modelSpeakingTimeout = setTimeout(() => {
         session.modelSpeaking = false;
         session.modelSpeakingTimeout = null;
-        console.log(`[WS] Audio gate lifted for session ${sessionId}`);
+        console.log(`[WS] Audio gate LIFTED for session ${sessionId}`);
       }, 300);
 
       sendToClient(session.clientWs, { type: "turnComplete" });
