@@ -1,5 +1,6 @@
 import type { WebSocket } from "ws";
 import { prisma } from "../db/prisma.js";
+import { env } from "../config/env.js";
 import {
   buildSystemPrompt,
   buildContextMessage,
@@ -189,6 +190,15 @@ export async function handleWebSocketConnection(
         return;
       }
 
+      // Log when audio starts being forwarded after model was speaking
+      const lastChunkCount = (session as any).lastGatedChunkCount || 0;
+      if (audioChunkCount > lastChunkCount + 10) {
+        console.log(
+          `[WS] Audio forwarding resumed — chunk #${audioChunkCount} (was gated at #${lastChunkCount})`
+        );
+      }
+      (session as any).lastGatedChunkCount = audioChunkCount;
+
       // Log first 3 chunks and then every 5 seconds
       const now = Date.now();
       if (audioChunkCount <= 3 || now - lastAudioLogTime > 5000) {
@@ -285,7 +295,15 @@ function flushPendingModelText(sessionId: string): void {
     text: fullText,
     timestamp: Date.now() - session.startedAt,
   };
-  session.transcript.push(entry);
+
+  // Check if the last entry is a partial model transcript - replace it instead of adding duplicate
+  const lastIndex = session.transcript.length - 1;
+  if (lastIndex >= 0 && session.transcript[lastIndex].role === "model" && session.transcript[lastIndex].partial) {
+    session.transcript[lastIndex] = entry;
+  } else {
+    session.transcript.push(entry);
+  }
+
   sendToClient(session.clientWs, { type: "transcript", entry });
   console.log(
     `[Transcript] Model (${session.transcript.length}): "${fullText.slice(0, 80)}..."`
@@ -334,6 +352,10 @@ function flushPendingModelText(sessionId: string): void {
 function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
   let inputTranscriptCount = 0;
   let outputTranscriptCount = 0;
+
+  // Throttling for partial transcript updates
+  let lastPartialTranscriptTime = 0;
+  const PARTIAL_TRANSCRIPT_INTERVAL_MS = 200; // Send partial updates every 200ms
 
   return {
     onSetupComplete: () => {
@@ -386,9 +408,10 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       if (!session) return;
 
       inputTranscriptCount++;
-      if (inputTranscriptCount <= 5) {
+      // Only log in debug mode - avoid logging user speech content in production
+      if (env.DEBUG && inputTranscriptCount <= 5) {
         console.log(
-          `[Gemini] InputTranscription #${inputTranscriptCount}: "${text}" finished=${finished}`
+          `[Gemini] InputTranscription #${inputTranscriptCount}: "${text.slice(0, 30)}..." finished=${finished}`
         );
       }
 
@@ -396,6 +419,7 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
       // Flush if API sends finished flag (may or may not happen per API version)
       if (finished) {
+        console.log(`[Gemini] User speech finished, flushing transcription`);
         flushPendingUserText(sessionId);
       }
     },
@@ -418,6 +442,21 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       }
 
       session.pendingModelText += text;
+
+      // Send partial transcript updates with throttling (every 200ms) or immediately when finished
+      const now = Date.now();
+      const shouldSendPartial = !finished && (now - lastPartialTranscriptTime >= PARTIAL_TRANSCRIPT_INTERVAL_MS);
+
+      if (finished || shouldSendPartial) {
+        lastPartialTranscriptTime = now;
+        const partialEntry: TranscriptEntry = {
+          role: "model",
+          text: session.pendingModelText,
+          timestamp: Date.now() - session.startedAt,
+          partial: !finished,
+        };
+        sendToClient(session.clientWs, { type: "transcript", entry: partialEntry });
+      }
 
       // Flush if API sends finished flag
       if (finished) {
@@ -462,10 +501,11 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       if (session.modelSpeakingTimeout) {
         clearTimeout(session.modelSpeakingTimeout);
       }
+      console.log(`[WS] AI finished speaking, will lift audio gate in 300ms`);
       session.modelSpeakingTimeout = setTimeout(() => {
         session.modelSpeaking = false;
         session.modelSpeakingTimeout = null;
-        console.log(`[WS] Audio gate lifted for session ${sessionId}`);
+        console.log(`[WS] Audio gate LIFTED for session ${sessionId}`);
       }, 300);
 
       sendToClient(session.clientWs, { type: "turnComplete" });
