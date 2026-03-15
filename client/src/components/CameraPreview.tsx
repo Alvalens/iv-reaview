@@ -22,8 +22,17 @@ export function CameraPreview({
     }
   }, [stream]);
 
+  // If no stream or video is off, show the video off indicator
   if (!stream || isVideoOff) {
-    return null;
+    return (
+      <div
+        className={`absolute ${
+          position === "bottom-right" ? "bottom-4 right-4" : "bottom-4 left-4"
+        } z-20 flex h-[120px] w-[160px] items-center justify-center rounded-xl border-2 border-white/20 bg-card shadow-lg`}
+      >
+        <Video className="h-6 w-6 text-muted-foreground" />
+      </div>
+    );
   }
 
   const positionClasses =
@@ -58,13 +67,6 @@ export function CameraPreview({
           <div className="flex h-5 w-5 items-center justify-center rounded-full bg-green-500" />
         )}
       </div>
-
-      {/* Video off indicator (backup) */}
-      {isVideoOff && (
-        <div className="absolute inset-0 flex items-center justify-center bg-card">
-          <Video className="h-6 w-6 text-muted-foreground" />
-        </div>
-      )}
     </div>
   );
 }

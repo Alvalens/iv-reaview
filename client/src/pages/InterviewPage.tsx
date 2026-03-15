@@ -251,16 +251,18 @@ export function InterviewPage() {
               ? "bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/25"
               : "bg-white/10 hover:bg-white/20 shadow-lg shadow-black/20"
               }`}
-            title={isMuted ? "Unmute" : "Mute"}
+            aria-label={!modelReady ? "Microphone off - waiting for interviewer" : isMuted ? "Unmute microphone" : "Mute microphone"}
           >
-            {isMuted || !modelReady ? (
+            {!modelReady ? (
+              <MicOff className="h-7 w-7 text-white" />
+            ) : isMuted ? (
               <MicOff className="h-7 w-7 text-white" />
             ) : (
               <Mic className="h-7 w-7 text-white" />
             )}
           </button>
           <span className="text-xs font-medium text-white/60">
-            {isMuted || !modelReady ? "Unmute" : "Mute"}
+            {!modelReady ? "Mic off" : isMuted ? "Unmute" : "Mute"}
           </span>
         </div>
 
@@ -269,7 +271,7 @@ export function InterviewPage() {
           <button
             onClick={endSession}
             className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500 shadow-lg shadow-red-500/25 transition-all duration-200 hover:scale-105 hover:bg-red-600"
-            title="End interview"
+            aria-label="End interview"
           >
             <PhoneOff className="h-7 w-7 text-white" />
           </button>

@@ -1,5 +1,6 @@
 import type { WebSocket } from "ws";
 import { prisma } from "../db/prisma.js";
+import { env } from "../config/env.js";
 import {
   buildSystemPrompt,
   buildContextMessage,
@@ -294,7 +295,15 @@ function flushPendingModelText(sessionId: string): void {
     text: fullText,
     timestamp: Date.now() - session.startedAt,
   };
-  session.transcript.push(entry);
+
+  // Check if the last entry is a partial model transcript - replace it instead of adding duplicate
+  const lastIndex = session.transcript.length - 1;
+  if (lastIndex >= 0 && session.transcript[lastIndex].role === "model" && session.transcript[lastIndex].partial) {
+    session.transcript[lastIndex] = entry;
+  } else {
+    session.transcript.push(entry);
+  }
+
   sendToClient(session.clientWs, { type: "transcript", entry });
   console.log(
     `[Transcript] Model (${session.transcript.length}): "${fullText.slice(0, 80)}..."`
@@ -343,6 +352,10 @@ function flushPendingModelText(sessionId: string): void {
 function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
   let inputTranscriptCount = 0;
   let outputTranscriptCount = 0;
+
+  // Throttling for partial transcript updates
+  let lastPartialTranscriptTime = 0;
+  const PARTIAL_TRANSCRIPT_INTERVAL_MS = 200; // Send partial updates every 200ms
 
   return {
     onSetupComplete: () => {
@@ -395,10 +408,12 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
       if (!session) return;
 
       inputTranscriptCount++;
-      // Log ALL input transcriptions to debug delays
-      console.log(
-        `[Gemini] InputTranscription #${inputTranscriptCount}: "${text.slice(0, 50)}..." finished=${finished}`
-      );
+      // Only log in debug mode - avoid logging user speech content in production
+      if (env.DEBUG && inputTranscriptCount <= 5) {
+        console.log(
+          `[Gemini] InputTranscription #${inputTranscriptCount}: "${text.slice(0, 30)}..." finished=${finished}`
+        );
+      }
 
       session.pendingUserText += text;
 
@@ -428,14 +443,20 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
       session.pendingModelText += text;
 
-      // Send real-time partial transcription to client
-      const partialEntry: TranscriptEntry = {
-        role: "model",
-        text: session.pendingModelText,
-        timestamp: Date.now() - session.startedAt,
-        partial: true,
-      };
-      sendToClient(session.clientWs, { type: "transcript", entry: partialEntry });
+      // Send partial transcript updates with throttling (every 200ms) or immediately when finished
+      const now = Date.now();
+      const shouldSendPartial = !finished && (now - lastPartialTranscriptTime >= PARTIAL_TRANSCRIPT_INTERVAL_MS);
+
+      if (finished || shouldSendPartial) {
+        lastPartialTranscriptTime = now;
+        const partialEntry: TranscriptEntry = {
+          role: "model",
+          text: session.pendingModelText,
+          timestamp: Date.now() - session.startedAt,
+          partial: !finished,
+        };
+        sendToClient(session.clientWs, { type: "transcript", entry: partialEntry });
+      }
 
       // Flush if API sends finished flag
       if (finished) {
