@@ -2,8 +2,12 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { GoogleGenAI } from "@google/genai";
 import { env } from "../config/env.js";
+import { authMiddleware } from "../middleware/auth.js";
 
 export const cvRouter = Router();
+
+// Apply auth middleware to all CV routes
+cvRouter.use(authMiddleware);
 
 const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 

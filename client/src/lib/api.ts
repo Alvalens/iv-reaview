@@ -2,14 +2,26 @@ import type { ScoringResult } from "./types";
 
 const API_BASE = "/api";
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem("token");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function request<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
+      ...getAuthHeaders(),
+      // Don't override Content-Type for FormData
+      ...(options?.body instanceof FormData ? {} : options?.headers),
     },
     ...options,
   });
@@ -39,10 +51,11 @@ export const api = {
   scoreSession: async (id: string): Promise<ScoringResult> => {
     // Poll until scoring completes (server returns 202 while per-question scoring is running)
     const maxAttempts = 30;
+    const headers = getAuthHeaders();
     for (let i = 0; i < maxAttempts; i++) {
       const res = await fetch(`${API_BASE}/sessions/${id}/score`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
       });
 
       if (res.status === 202) {
@@ -67,6 +80,9 @@ export const api = {
     formData.append("file", file);
     const res = await fetch(`${API_BASE}/cv/extract`, {
       method: "POST",
+      headers: {
+        ...getAuthHeaders(),
+      },
       body: formData,
     });
     if (!res.ok) {
