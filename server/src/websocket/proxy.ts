@@ -524,7 +524,7 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
         onAudioData: (base64Pcm24: string) => {
             const session = getActiveSession(sessionId);
-            if (!session) return;
+            if (!session || session.status !== "live") return;
 
             // Enable audio forwarding once model starts speaking (grace period over)
             if (!session.audioForwardingEnabled) {
@@ -548,7 +548,7 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
         onInputTranscription: (text: string, finished: boolean) => {
             const session = getActiveSession(sessionId);
-            if (!session) return;
+            if (!session || session.status !== "live") return;
 
             inputTranscriptCount++;
             // Only log in debug mode - avoid logging user speech content in production
@@ -569,7 +569,7 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
         onOutputTranscription: (text: string, finished: boolean) => {
             const session = getActiveSession(sessionId);
-            if (!session) return;
+            if (!session || session.status !== "live") return;
 
             outputTranscriptCount++;
             if (outputTranscriptCount <= 5) {
@@ -612,7 +612,7 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
         onInterrupted: () => {
             const session = getActiveSession(sessionId);
-            if (!session) return;
+            if (!session || session.status !== "live") return;
 
             // User interrupted — immediately ungate mic audio
             session.modelSpeaking = false;
@@ -634,7 +634,7 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
         onTurnComplete: () => {
             const session = getActiveSession(sessionId);
-            if (!session) return;
+            if (!session || session.status !== "live") return;
 
             // Flush any remaining pending transcription text
             // This is the primary flush mechanism per Google's recommendation:

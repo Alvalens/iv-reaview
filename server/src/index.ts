@@ -12,6 +12,7 @@ import { scoringRouter } from "./routes/scoring.js";
 import { authRouter } from "./routes/auth.js";
 import { handleWebSocketConnection } from "./websocket/proxy.js";
 import { wsRateLimiter } from "./middleware/websocket-rate-limit.js";
+import { getGeneratedAvatarsDir } from "./services/persona-generator.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,12 +35,15 @@ app.use("/api/sessions", sessionsRouter);
 app.use("/api/sessions", scoringRouter);
 app.use("/api/cv", cvRouter);
 
+// Serve runtime-generated avatar images (writable on Cloud Run)
+app.use("/generated-avatars", express.static(getGeneratedAvatarsDir()));
+
 // Serve client static files in production
 // In the Docker image, client build output is copied to ../public relative to dist/
 const publicDir = path.resolve(__dirname, "../public");
 app.use(express.static(publicDir));
-// SPA fallback — serve index.html for all non-API, non-WS routes
-app.get(/^\/(?!api|ws).*/, (_req, res) => {
+// SPA fallback — serve index.html for all non-API, non-WS, non-generated routes
+app.get(/^\/(?!api|ws|generated-avatars).*/, (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
