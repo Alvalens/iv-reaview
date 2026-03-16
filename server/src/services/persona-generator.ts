@@ -158,9 +158,26 @@ export function getRandomVoice(gender?: "male" | "female"): string {
   return voiceList[Math.floor(Math.random() * voiceList.length)];
 }
 
+/** Directory for runtime-generated avatar images (served by Express) */
+const GENERATED_AVATARS_DIR = path.resolve(process.cwd(), "generated-avatars");
+
+/** Ensure the generated avatars directory exists */
+function ensureAvatarDir(): void {
+  if (!fs.existsSync(GENERATED_AVATARS_DIR)) {
+    fs.mkdirSync(GENERATED_AVATARS_DIR, { recursive: true });
+  }
+}
+
+/** Get the absolute path to the generated avatars directory (for Express static serving) */
+export function getGeneratedAvatarsDir(): string {
+  ensureAvatarDir();
+  return GENERATED_AVATARS_DIR;
+}
+
 /**
  * Generate an avatar image for a random persona using Gemini API.
- * Saves the image to client/public/images/persona/generated/ and returns the public path.
+ * Saves to server-local generated-avatars/ directory (served via /generated-avatars/ route).
+ * Works on Cloud Run since it writes to the server's own writable filesystem.
  */
 export async function generateAvatarImage(personaName: string, persona: {
   personality: string;
@@ -201,32 +218,18 @@ export async function generateAvatarImage(personaName: string, persona: {
       throw new Error("No image data in response");
     }
 
-    // Decode base64 image bytes
     const imageBytes = Buffer.from(imageData, "base64");
-
-    // Generate unique filename
     const sanitizedName = personaName.replace(/[^a-zA-Z0-9]/g, "_");
     const filename = `${sanitizedName}_${Date.now()}.png`;
-    const relativePath = `/images/persona/generated/${filename}`;
 
-    // Resolve path to client/public directory (server is at project root/server)
-    const projectRoot = path.resolve(process.cwd(), "..");
-    const publicDir = path.join(projectRoot, "client", "public", "images", "persona", "generated");
+    ensureAvatarDir();
+    fs.writeFileSync(path.join(GENERATED_AVATARS_DIR, filename), imageBytes);
 
-    // Ensure directory exists
-    if (!fs.existsSync(publicDir)) {
-      fs.mkdirSync(publicDir, { recursive: true });
-    }
-
-    // Write file
-    const filePath = path.join(publicDir, filename);
-    fs.writeFileSync(filePath, imageBytes);
-
-    console.log(`[Avatar] Saved avatar to: ${relativePath}`);
-    return relativePath;
+    const servePath = `/generated-avatars/${filename}`;
+    console.log(`[Avatar] Saved avatar: ${servePath}`);
+    return servePath;
   } catch (error) {
     console.error("[Avatar] Failed to generate avatar:", error);
-    // Return undefined so the caller can fall back to emoji avatar
     return "";
   }
 }
