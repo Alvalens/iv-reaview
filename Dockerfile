@@ -31,6 +31,7 @@ COPY --from=server-builder /app/server/package.json ./package.json
 COPY --from=server-builder /app/server/prisma ./prisma
 COPY --from=server-builder /app/server/prisma.config.ts ./prisma.config.ts
 COPY --from=server-builder /app/server/src/generated ./src/generated
+COPY --from=server-builder /app/server/src/generated ./dist/generated
 
 # Copy client build output → served as static files by Express
 COPY --from=client-builder /app/client/dist ./public
