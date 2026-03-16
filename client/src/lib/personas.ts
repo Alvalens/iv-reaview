@@ -16,10 +16,11 @@ export const PERSONAS: PersonaConfig[] = [
             "Opens with friendly small talk. Focuses on behavioral questions using STAR method.",
         quirks: [],
         avatar: {
-            emoji: "\u{1F610}",
+            emoji: "\u{1F60A}",
             icon: SmilePlus,
             color: "emerald",
             gradient: "from-emerald-500 to-teal-600",
+            image: "/images/persona/Sarah Chen.png",
         },
     },
     {
@@ -35,10 +36,11 @@ export const PERSONAS: PersonaConfig[] = [
             "Minimal small talk. Probing questions. Challenges answers. Tests composure.",
         quirks: [],
         avatar: {
-            emoji: "\u{1F9D0}",
+            emoji: "\u{1F610}",
             icon: Frown,
             color: "rose",
             gradient: "from-rose-500 to-red-600",
+            image: "/images/persona/David Morrison.png",
         },
     },
     {
@@ -54,15 +56,16 @@ export const PERSONAS: PersonaConfig[] = [
             "Mix of behavioral and technical questions. Probes for depth. Evaluates thinking process.",
         quirks: [],
         avatar: {
-            emoji: "\u{1F3B2}",
+            emoji: "\u{1F9D0}",
             icon: Brain,
             color: "blue",
             gradient: "from-blue-500 to-indigo-600",
+            image: "/images/persona/Maya Patel.png",
         },
     },
 ];
 
-export const RANDOM_PERSONA = {
+export const RANDOM_PERSONA: PersonaConfig = {
     id: "random",
     name: "Random",
     title: "AI-Generated Interviewer",
@@ -74,8 +77,10 @@ export const RANDOM_PERSONA = {
     interviewStyle: "Unique every time",
     quirks: [],
     avatar: {
+        emoji: "\u{1F3B2}",
         icon: Dices,
         color: "purple",
         gradient: "from-purple-500 to-violet-600",
+        image: undefined,
     },
 };

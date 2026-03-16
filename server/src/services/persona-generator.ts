@@ -1,6 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { env } from "../config/env.js";
 import type { PersonaConfig, InterviewType } from "../types/index.js";
+import * as fs from "fs";
+import * as path from "path";
 
 const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 
@@ -29,6 +31,7 @@ export const PERSONAS: Record<string, PersonaConfig> = {
       emoji: "\u{1F60A}",
       color: "emerald",
       gradient: "from-emerald-500 to-teal-600",
+      image: "/images/persona/Sarah Chen.png",
     },
   },
 
@@ -55,6 +58,7 @@ export const PERSONAS: Record<string, PersonaConfig> = {
       emoji: "\u{1F610}",
       color: "rose",
       gradient: "from-rose-500 to-red-600",
+      image: "/images/persona/David Morrison.png",
     },
   },
 
@@ -81,24 +85,33 @@ export const PERSONAS: Record<string, PersonaConfig> = {
       emoji: "\u{1F9D0}",
       color: "blue",
       gradient: "from-blue-500 to-indigo-600",
+      image: "/images/persona/Maya Patel.png",
     },
   },
 };
 
 // Voices available for random personas (excluding predefined persona voices)
-const RANDOM_VOICES = [
+// Male voices
+const MALE_VOICES = [
   "Puck",
-  "Aoede",
   "Fenrir",
   "Orus",
   "Schedar",
   "Sadaltager",
   "Zephyr",
-  "Autonoe",
   "Umbriel",
   "Achernar",
   "Algieba",
 ];
+
+// Female voices
+const FEMALE_VOICES = [
+  "Aoede",
+  "Autonoe",
+];
+
+// All voices (fallback)
+const ALL_VOICES = [...MALE_VOICES, ...FEMALE_VOICES];
 
 const RANDOM_AVATAR_OPTIONS = [
   { emoji: "\u{1F914}", color: "amber", gradient: "from-amber-500 to-orange-600" },
@@ -113,6 +126,7 @@ const randomPersonaSchema = {
   type: Type.OBJECT,
   properties: {
     name: { type: Type.STRING, description: "Realistic full name (any ethnicity)" },
+    gender: { type: Type.STRING, description: "Gender of the persona: 'male' or 'female'" },
     title: { type: Type.STRING, description: "Specific professional title" },
     company: { type: Type.STRING, description: "Fictional but believable company name" },
     personality: { type: Type.STRING, description: "2-3 sentences describing their personality as an interviewer" },
@@ -125,15 +139,96 @@ const randomPersonaSchema = {
       description: "4-5 unique behavioral traits, signature phrases, or habits during interviews",
     },
   },
-  required: ["name", "title", "company", "personality", "industry", "tone", "interviewStyle", "quirks"],
+  required: ["name", "gender", "title", "company", "personality", "industry", "tone", "interviewStyle", "quirks"],
 };
 
 export function getPersona(id: string): PersonaConfig | undefined {
   return PERSONAS[id];
 }
 
-export function getRandomVoice(): string {
-  return RANDOM_VOICES[Math.floor(Math.random() * RANDOM_VOICES.length)];
+export function getRandomVoice(gender?: "male" | "female"): string {
+  let voiceList: string[];
+  if (gender === "male") {
+    voiceList = MALE_VOICES;
+  } else if (gender === "female") {
+    voiceList = FEMALE_VOICES;
+  } else {
+    voiceList = ALL_VOICES;
+  }
+  return voiceList[Math.floor(Math.random() * voiceList.length)];
+}
+
+/**
+ * Generate an avatar image for a random persona using Gemini API.
+ * Saves the image to client/public/images/persona/generated/ and returns the public path.
+ */
+export async function generateAvatarImage(personaName: string, persona: {
+  personality: string;
+  tone: string;
+  industry: string;
+}): Promise<string> {
+  const prompt = `Professional headshot portrait of a ${persona.industry} professional named ${personaName}. ${persona.personality} ${persona.tone}. Corporate executive portrait style, photorealistic, clean minimal background, warm professional lighting, upper torso shot, friendly but professional expression. No text, no logos.`;
+
+  console.log(`[Avatar] Generating avatar for ${personaName}...`);
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-image-preview",
+      contents: prompt,
+    });
+
+    // Find inline data in response
+    const candidates = response.candidates;
+    if (!candidates || candidates.length === 0) {
+      throw new Error("No candidates in response");
+    }
+
+    const parts = candidates[0].content?.parts;
+    if (!parts || parts.length === 0) {
+      throw new Error("No parts in response");
+    }
+
+    // Find the image data
+    let imageData: string | undefined;
+    for (const part of parts) {
+      if (part.inlineData?.data) {
+        imageData = part.inlineData.data;
+        break;
+      }
+    }
+
+    if (!imageData) {
+      throw new Error("No image data in response");
+    }
+
+    // Decode base64 image bytes
+    const imageBytes = Buffer.from(imageData, "base64");
+
+    // Generate unique filename
+    const sanitizedName = personaName.replace(/[^a-zA-Z0-9]/g, "_");
+    const filename = `${sanitizedName}_${Date.now()}.png`;
+    const relativePath = `/images/persona/generated/${filename}`;
+
+    // Resolve path to client/public directory (server is at project root/server)
+    const projectRoot = path.resolve(process.cwd(), "..");
+    const publicDir = path.join(projectRoot, "client", "public", "images", "persona", "generated");
+
+    // Ensure directory exists
+    if (!fs.existsSync(publicDir)) {
+      fs.mkdirSync(publicDir, { recursive: true });
+    }
+
+    // Write file
+    const filePath = path.join(publicDir, filename);
+    fs.writeFileSync(filePath, imageBytes);
+
+    console.log(`[Avatar] Saved avatar to: ${relativePath}`);
+    return relativePath;
+  } catch (error) {
+    console.error("[Avatar] Failed to generate avatar:", error);
+    // Return undefined so the caller can fall back to emoji avatar
+    return "";
+  }
 }
 
 /**
@@ -166,6 +261,7 @@ Be creative. Make this persona feel like a real person you'd actually meet in an
 
   const raw = JSON.parse(text) as {
     name: string;
+    gender: "male" | "female";
     title: string;
     company: string;
     personality: string;
@@ -175,11 +271,23 @@ Be creative. Make this persona feel like a real person you'd actually meet in an
     quirks: string[];
   };
 
-  const voice = getRandomVoice();
-  const avatar = RANDOM_AVATAR_OPTIONS[Math.floor(Math.random() * RANDOM_AVATAR_OPTIONS.length)];
+  const voice = getRandomVoice(raw.gender);
+  const baseAvatar = RANDOM_AVATAR_OPTIONS[Math.floor(Math.random() * RANDOM_AVATAR_OPTIONS.length)];
   const id = `random_${Date.now()}`;
 
-  console.log(`[Persona] Generated random persona: ${raw.name} (${raw.title} at ${raw.company}), voice=${voice}`);
+  // Generate AI avatar image
+  const imagePath = await generateAvatarImage(raw.name, {
+    personality: raw.personality,
+    tone: raw.tone,
+    industry: raw.industry,
+  });
+
+  const avatar = {
+    ...baseAvatar,
+    image: imagePath || undefined,
+  };
+
+  console.log(`[Persona] Generated random persona: ${raw.name} (${raw.title} at ${raw.company}), voice=${voice}, avatar=${imagePath ? "AI-generated" : "fallback"}`);
 
   return {
     id,

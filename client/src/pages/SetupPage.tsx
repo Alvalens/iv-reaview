@@ -205,10 +205,18 @@ export function SetupPage() {
                                                 }`}
                                         >
                                             <div
-                                                className={`mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br ${persona.avatar.gradient} shadow-lg transition-transform duration-300 ${isSelected ? "scale-110" : "group-hover:scale-105"
-                                                    }`}
+                                                className={`mb-4 flex h-16 w-16 items-center justify-center rounded-2xl shadow-lg ring-2 ring-white/20 transition-transform duration-300 ${isSelected ? "scale-110" : "group-hover:scale-105"
+                                                    } ${persona.avatar.gradient}`}
                                             >
-                                                {(() => {
+                                                {persona.avatar.image ? (
+                                                    <div className="h-full w-full rounded-2xl bg-black/30">
+                                                        <img
+                                                            src={persona.avatar.image}
+                                                            alt={persona.name}
+                                                            className="h-full w-full rounded-2xl object-cover"
+                                                        />
+                                                    </div>
+                                                ) : (() => {
                                                     const Icon = persona.avatar.icon;
                                                     return Icon ? <Icon className="h-10 w-10 text-white" /> : null;
                                                 })()}
@@ -511,8 +519,16 @@ export function SetupPage() {
                                 {selectedPersonaData && (
                                     <div className="rounded-xl bg-linear-to-br from-[#1FB6FF]/5 to-[#0EA5E9]/2 border border-[#1FB6FF]/20 p-6">
                                         <div className="flex items-start gap-4">
-                                            <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br ${selectedPersonaData.avatar.gradient} shadow-lg`}>
-                                                {(() => {
+                                            <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl shadow-lg ring-2 ring-white/20 ${selectedPersonaData.avatar.gradient}`}>
+                                                {selectedPersonaData.avatar.image ? (
+                                                    <div className="h-full w-full rounded-2xl bg-black/30">
+                                                        <img
+                                                            src={selectedPersonaData.avatar.image}
+                                                            alt={selectedPersonaData.name}
+                                                            className="h-full w-full rounded-2xl object-cover"
+                                                        />
+                                                    </div>
+                                                ) : (() => {
                                                     const Icon = selectedPersonaData.avatar.icon;
                                                     return Icon ? <Icon className="h-10 w-10 text-white" /> : null;
                                                 })()}
