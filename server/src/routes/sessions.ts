@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Response } from "express";
 import { prisma } from "../db/prisma.js";
 import { getPersona, generateRandomPersona } from "../services/persona-generator.js";
 import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
@@ -11,11 +11,8 @@ sessionsRouter.use(authMiddleware);
 
 // POST /api/sessions — Create a new interview session
 sessionsRouter.post("/", async (req: AuthRequest, res: Response) => {
-  // Explicitly check for authenticated user
-  if (!req.user || !req.user.userId) {
-    res.status(500).json({ error: "Authenticated user context is missing" });
-    return;
-  }
+  // authMiddleware guarantees req.user is set - use non-null assertion for type safety
+  const userId = req.user!.userId;
 
   const body = req.body as CreateSessionRequest;
 
@@ -66,7 +63,7 @@ sessionsRouter.post("/", async (req: AuthRequest, res: Response) => {
       personaConfig: JSON.stringify(selectedPersona),
       voiceName: selectedPersona.voiceName,
       duration: body.duration ?? 600,
-      userId: req.user.userId,
+      userId,
     },
   });
 

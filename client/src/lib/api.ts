@@ -4,9 +4,7 @@ const API_BASE = "/api";
 
 function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem("token");
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const headers: Record<string, string> = {};
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
@@ -17,12 +15,22 @@ async function request<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
+  const isFormData = options?.body instanceof FormData;
+
+  // Build headers: don't set Content-Type for FormData (browser sets it with boundary)
+  const headers: HeadersInit = isFormData
+    ? {
+        ...getAuthHeaders(),
+        ...(options?.headers || {}),
+      }
+    : {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+        ...(options?.headers || {}),
+      };
+
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      ...getAuthHeaders(),
-      // Don't override Content-Type for FormData
-      ...(options?.body instanceof FormData ? {} : options?.headers),
-    },
+    headers,
     ...options,
   });
 

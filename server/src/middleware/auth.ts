@@ -40,12 +40,13 @@ export const authMiddleware = (
 
     next();
   } catch (error) {
-    if (error instanceof jwt.JsonWebTokenError) {
-      res.status(401).json({ error: "Invalid token" });
-      return;
-    }
+    // Check TokenExpiredError BEFORE JsonWebTokenError since it's a subclass
     if (error instanceof jwt.TokenExpiredError) {
       res.status(401).json({ error: "Token expired" });
+      return;
+    }
+    if (error instanceof jwt.JsonWebTokenError) {
+      res.status(401).json({ error: "Invalid token" });
       return;
     }
     console.error("[Auth] Middleware error:", error);

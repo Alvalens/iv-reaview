@@ -2,17 +2,18 @@ import rateLimit from "express-rate-limit";
 import { rateLimitConfig } from "../config/rate-limit.js";
 
 /**
- * Global rate limiter
- * Limits total requests across all IPs
+ * AI API rate limiter
+ * Limits requests to endpoints that call Gemini AI APIs
+ * Applied to: /api/cv/extract, /api/sessions/:id/score
+ * Uses default per-IP keying to prevent one user from affecting others
  */
-export const globalLimiter = rateLimit({
+export const aiApiLimiter = rateLimit({
   windowMs: rateLimitConfig.global.windowMs,
   max: rateLimitConfig.global.maxRequests,
   message: { error: rateLimitConfig.global.message },
   standardHeaders: rateLimitConfig.global.standardHeaders,
   legacyHeaders: rateLimitConfig.global.legacyHeaders,
-  // Use a single key for global limit (not IP-based)
-  keyGenerator: () => "global",
+  // Uses default keyGenerator (per IP) - no override needed
 });
 
 /**

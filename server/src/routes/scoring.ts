@@ -2,6 +2,7 @@ import { Router, type Response } from "express";
 import { prisma } from "../db/prisma.js";
 import { aggregateSessionScores } from "../services/scoring.js";
 import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
+import { aiApiLimiter } from "../middleware/rate-limit.js";
 import type { InterviewType } from "../types/index.js";
 
 export const scoringRouter = Router();
@@ -10,7 +11,8 @@ export const scoringRouter = Router();
 scoringRouter.use(authMiddleware);
 
 // POST /api/sessions/:id/score — Aggregate per-question scores + generate narrative
-scoringRouter.post("/:id/score", async (req: AuthRequest, res: Response) => {
+// Rate limited since this endpoint calls Gemini AI API
+scoringRouter.post("/:id/score", aiApiLimiter, async (req: AuthRequest, res: Response) => {
   const sessionId = req.params.id as string;
 
   const session = await prisma.interviewSession.findUnique({
