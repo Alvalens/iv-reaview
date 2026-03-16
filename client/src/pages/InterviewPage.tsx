@@ -153,21 +153,21 @@ export function InterviewPage() {
             <div className="absolute inset-0 bg-gradient-to-b from-primary/30 via-primary/20 to-primary/40" />
             {/* Time Warning Dialog */}
             <Dialog open={!!timeWarning} onOpenChange={dismissWarning}>
-                <DialogContent className="max-w-md">
+                <DialogContent className="max-w-md bg-slate-900 text-white border-none">
                     <div className="flex flex-col items-center text-center">
                         <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/20">
                             <Loader2 className="h-8 w-8 text-amber-500" />
                         </div>
                         <DialogHeader>
-                            <DialogTitle className="mb-2 text-xl font-semibold text-foreground">
+                            <DialogTitle className="mb-2 text-xl font-semibold text-white">
                                 Interview Time Ending Soon
                             </DialogTitle>
-                            <DialogDescription className="mb-6 text-muted-foreground">
+                            <DialogDescription className="mb-6 text-amber-100">
                                 Your interview will end in <span className="font-semibold text-amber-500">{timeWarning} seconds</span>.
                                 Please wrap up your current answer.
                             </DialogDescription>
                         </DialogHeader>
-                        <Button onClick={dismissWarning} className="w-full">
+                        <Button onClick={dismissWarning} className="w-full bg-amber-500 text-white hover:bg-amber-600">
                             Continue Interview
                         </Button>
                     </div>
