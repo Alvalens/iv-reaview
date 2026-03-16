@@ -40,14 +40,35 @@ const WARNING_BEFORE_MS = 60 * 1000; // 1 minute before end
 
 type TimedActiveSession = ActiveSession & { sessionDurationMs?: number };
 
-function startSessionTimeout(sessionId: string): void {
+async function startSessionTimeout(sessionId: string): Promise<void> {
     const baseSession = getActiveSession(sessionId) as TimedActiveSession | null;
     if (!baseSession) return;
-    // Use per-session duration if available, otherwise fall back to default
+
+    // Attempt to load the configured duration (in seconds) from the DB
+    let dbDurationMs: number | undefined;
+    try {
+        const dbSession = await prisma.interviewSession.findUnique({
+            where: { id: sessionId },
+            select: { duration: true },
+        });
+        if (dbSession && typeof dbSession.duration === "number" && dbSession.duration > 0) {
+            // Convert seconds from the DB into milliseconds
+            dbDurationMs = dbSession.duration * 1000;
+        }
+    } catch (err) {
+        console.error(
+            `[Timeout] Failed to load duration for session ${sessionId} from DB, falling back to defaults`,
+            err
+        );
+    }
+
+    // Resolve effective session duration (ms): DB-configured > per-session > default
     const sessionDurationMs =
-        typeof baseSession.sessionDurationMs === "number" && baseSession.sessionDurationMs > 0
-            ? baseSession.sessionDurationMs
-            : DEFAULT_SESSION_DURATION_MS;
+        (typeof dbDurationMs === "number" && dbDurationMs > 0
+            ? dbDurationMs
+            : typeof baseSession.sessionDurationMs === "number" && baseSession.sessionDurationMs > 0
+                ? baseSession.sessionDurationMs
+                : DEFAULT_SESSION_DURATION_MS);
     // Persist the resolved duration on the active session so subsequent reads are consistent
     baseSession.sessionDurationMs = sessionDurationMs;
 
@@ -473,6 +494,14 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
             const session = getActiveSession(sessionId);
             if (!session) return;
 
+            // Make setup idempotent: avoid restarting timers and re-sending status on reconnects
+            if (session.status === "live" && session.startedAt) {
+                console.log(
+                    `[Gemini] Setup already completed for session ${sessionId}, ignoring duplicate onSetupComplete`
+                );
+                return;
+            }
+
             console.log(`[Gemini] Setup complete for session ${sessionId}`);
             session.status = "live";
             session.startedAt = Date.now();
@@ -662,10 +691,18 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
                 message: "AI connection error",
             });
 
-            if (session.resumptionHandle && session.status === "live") {
-                attemptReconnect(sessionId, session.resumptionHandle);
-            } else {
-                cleanupSession(sessionId, "ERROR");
+            const sessionAny = session as any;
+            if (sessionAny.sessionTimeout) {
+                clearTimeout(sessionAny.sessionTimeout);
+                sessionAny.sessionTimeout = null;
+            }
+
+            session.status = "reconnecting";
+            console.log(`[Gemini] Attempting reconnect for session ${sessionId}`);
+
+            if (session.geminiSession) {
+                closeGeminiSession(session.geminiSession);
+                session.geminiSession = null;
             }
         },
 
