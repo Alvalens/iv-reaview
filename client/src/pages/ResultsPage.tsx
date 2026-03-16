@@ -44,9 +44,9 @@ function ScoreRing({
     const progress = (score / 10) * circumference;
 
     const getScoreColor = (s: number) => {
-        if (s >= 7) return { text: "text-[#22C55E]", stroke: "stroke-[#22C55E]", glow: "shadow-[#22C55E]/20" };
-        if (s >= 5) return { text: "text-[#F59E0B]", stroke: "stroke-[#F59E0B]", glow: "shadow-[#F59E0B]/20" };
-        return { text: "text-[#EF4444]", stroke: "stroke-[#EF4444]", glow: "shadow-[#EF4444]/20" };
+        if (s >= 7) return { text: "text-[#22C55E]", stroke: "stroke-[#22C55E]" };
+        if (s >= 5) return { text: "text-[#F59E0B]", stroke: "stroke-[#F59E0B]" };
+        return { text: "text-[#EF4444]", stroke: "stroke-[#EF4444]" };
     };
 
     const colors = getScoreColor(score);
@@ -113,7 +113,7 @@ function ScoreBar({ score, label }: { score: number; label: string }) {
         <div className="space-y-2">
             <div className="flex items-center justify-between">
                 <span className="text-sm text-[#94A3B8]">{label}</span>
-                <span className="text-sm font-semibold text-[#F1F5F9]">{score.toFixed(1)}</span>
+                <span className="text-sm font-semibold text-[#F1F5F9]">{score.toFixed(1)} / 10</span>
             </div>
             <div className="h-2 rounded-full bg-[#0A1F33] overflow-hidden">
                 <div
@@ -386,7 +386,14 @@ export function ResultsPage() {
                                 <div
                                     className={`relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br ${persona.avatar.gradient} shadow-lg`}
                                 >
-                                    <User className="h-7 w-7 text-white" />
+                                    {persona.avatar?.icon ? (
+                                        (() => {
+                                            const Icon = persona.avatar.icon as React.ComponentType<{ className?: string }>;
+                                            return Icon ? <Icon className="h-10 w-10 text-white" /> : null;
+                                        })()
+                                    ) : (
+                                        <User className="h-7 w-7 text-white" />
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -497,10 +504,10 @@ export function ResultsPage() {
                                         <p className="text-sm text-[#F1F5F9]">{w.description}</p>
                                         <span
                                             className={`inline-block mt-1 text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide ${w.priority === "high"
-                                                    ? "bg-[#EF4444]/20 text-[#EF4444]"
-                                                    : w.priority === "medium"
-                                                        ? "bg-[#F59E0B]/20 text-[#F59E0B]"
-                                                        : "bg-[#64748B]/20 text-[#64748B]"
+                                                ? "bg-[#EF4444]/20 text-[#EF4444]"
+                                                : w.priority === "medium"
+                                                    ? "bg-[#F59E0B]/20 text-[#F59E0B]"
+                                                    : "bg-[#64748B]/20 text-[#64748B]"
                                                 }`}
                                         >
                                             {w.priority}
@@ -559,8 +566,8 @@ export function ResultsPage() {
                                     >
                                         <div
                                             className={`max-w-[75%] rounded-xl px-4 py-2.5 ${entry.role === "user"
-                                                    ? "bg-[#1FB6FF]/10 border border-[#1FB6FF]/20 text-[#F1F5F9]"
-                                                    : "bg-[#0A1F33] border border-[#1E3A5F] text-[#F1F5F9]/90"
+                                                ? "bg-[#1FB6FF]/10 border border-[#1FB6FF]/20 text-[#F1F5F9]"
+                                                : "bg-[#0A1F33] border border-[#1E3A5F] text-[#F1F5F9]/90"
                                                 }`}
                                         >
                                             <p className="text-sm leading-relaxed">{entry.text}</p>

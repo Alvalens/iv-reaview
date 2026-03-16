@@ -37,15 +37,25 @@ body {
     sans-serif;
 }
 
+.custom-scrollbar {
+  /* Firefox & standard scrollbar styling */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-accent-foreground) var(--color-secondary);
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 8px;
-  background: #0f2a44;
+  background: var(--color-secondary);
   border-radius: 8px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #1fb6ff 0%, #0ea5e9 100%);
+  background: linear-gradient(
+    180deg,
+    var(--color-accent-foreground) 0%,
+    var(--color-ring) 100%
+  );
   border-radius: 8px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #1fb6ff;
+  background: var(--color-accent-foreground);
 }
