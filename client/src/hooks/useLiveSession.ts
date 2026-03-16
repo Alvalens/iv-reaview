@@ -218,7 +218,6 @@ export function useLiveSession(sessionId: string) {
 
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number>(0);
 
   // Recorder refs — store all audio nodes to prevent GC
   const recorderCtxRef = useRef<AudioContext | null>(null);
