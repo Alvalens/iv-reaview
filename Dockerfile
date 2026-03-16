@@ -45,4 +45,4 @@ COPY --from=server-builder /app/server/src/seed.ts ./src/seed.ts
 COPY --from=server-builder /app/server/src/db ./src/db
 
 # Initialize DB + seed demo accounts + start server
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npx tsx src/seed.ts && node dist/index.js"]
+CMD ["sh", "-c", "npx prisma db push && npx tsx src/seed.ts && node dist/index.js"]
