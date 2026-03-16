@@ -463,8 +463,11 @@ export function useLiveSession(sessionId: string) {
         const playerAnalyser = playerAnalyserRef.current;
         if (playerAnalyser) {
           playerAnalyser.getByteFrequencyData(dataArray);
-          // Use average instead of max for more stable level
-          const sum = dataArray.reduce((a, b) => a + b, 0);
+          // Use for loop for better performance in animation frame
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i] ?? 0;
+          }
           const avgLevel = sum / dataArray.length / 255;
           maxLevel = Math.max(maxLevel, avgLevel);
         }
@@ -473,7 +476,10 @@ export function useLiveSession(sessionId: string) {
         const recorderAnalyser = recorderAnalyserRef.current;
         if (recorderAnalyser) {
           recorderAnalyser.getByteFrequencyData(dataArray);
-          const sum = dataArray.reduce((a, b) => a + b, 0);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i] ?? 0;
+          }
           const avgLevel = sum / dataArray.length / 255;
           maxLevel = Math.max(maxLevel, avgLevel);
         }

@@ -247,7 +247,7 @@ export function InterviewPage() {
           <button
             onClick={toggleMute}
             disabled={!modelReady}
-            className={`group flex h-16 w-16 items-center justify-center rounded-full transition-all duration-200 hover:scale-105 disabled:opacity-50 ${isMuted || !modelReady
+            className={`group flex h-16 w-16 items-center justify-center rounded-full transition-all duration-200 hover:scale-105 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isMuted || !modelReady
               ? "bg-red-500 hover:bg-red-600 shadow-lg shadow-red-500/25"
               : "bg-white/10 hover:bg-white/20 shadow-lg shadow-black/20"
               }`}
@@ -270,7 +270,7 @@ export function InterviewPage() {
         <div className="flex flex-col items-center gap-1">
           <button
             onClick={endSession}
-            className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500 shadow-lg shadow-red-500/25 transition-all duration-200 hover:scale-105 hover:bg-red-600"
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500 shadow-lg shadow-red-500/25 transition-all duration-200 hover:scale-105 hover:bg-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="End interview"
           >
             <PhoneOff className="h-7 w-7 text-white" />

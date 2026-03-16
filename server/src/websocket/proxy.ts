@@ -182,6 +182,8 @@ export async function handleWebSocketConnection(
       // Audio gating: don't forward mic audio while model is speaking
       // This prevents echo feedback where the model hears its own output
       if (session.modelSpeaking) {
+        // Record the last chunk number that was gated while the model is speaking
+        session.lastGatedChunkCount = audioChunkCount;
         if (audioChunkCount % 100 === 0) {
           console.log(
             `[WS] Audio gated (model speaking) — chunk #${audioChunkCount}`
@@ -191,13 +193,14 @@ export async function handleWebSocketConnection(
       }
 
       // Log when audio starts being forwarded after model was speaking
-      const lastChunkCount = session.lastGatedChunkCount ?? 0;
-      if (audioChunkCount > lastChunkCount + 10) {
+      const lastChunkCount = session.lastGatedChunkCount;
+      if (lastChunkCount !== undefined && audioChunkCount > lastChunkCount + 10) {
         console.log(
           `[WS] Audio forwarding resumed — chunk #${audioChunkCount} (was gated at #${lastChunkCount})`
         );
+        // Clear the marker so we only log once per gating period
+        session.lastGatedChunkCount = undefined;
       }
-      session.lastGatedChunkCount = audioChunkCount;
 
       // Log first 3 chunks and then every 5 seconds
       const now = Date.now();
