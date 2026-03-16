@@ -35,6 +35,8 @@ export interface ActiveSession {
   warningTimeout: ReturnType<typeof setTimeout> | null;
   /** Interval for sending time updates to client */
   timerInterval: ReturnType<typeof setInterval> | null;
+  /** Flag to indicate this is the last question (due to time warning or AI signals) */
+  isLastQuestion: boolean;
 }
 
 const activeSessions = new Map<string, ActiveSession>();

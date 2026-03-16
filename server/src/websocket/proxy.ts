@@ -63,7 +63,17 @@ function startSessionTimeout(sessionId: string): void {
     if (!s || s.status !== "live") return;
 
     console.log(`[Timeout] Sending 1-minute warning for session ${sessionId}`);
+    // Mark this as the last question - time is running out
+    s.isLastQuestion = true;
     sendToClient(s.clientWs, { type: "timeWarning", remainingSeconds: 60 });
+
+    // Notify Gemini that this is the final question due to time constraints
+    if (s.geminiSession) {
+      sendContextToGemini(
+        s.geminiSession,
+        "[SYSTEM] Time is running out. This is your last question. Please ask your final question now and then wrap up the interview after the user's answer."
+      );
+    }
   }, SESSION_DURATION_MS - WARNING_BEFORE_MS);
 
   // Force end at 10 minutes
@@ -176,6 +186,7 @@ export async function handleWebSocketConnection(
     sessionTimeout: null,
     warningTimeout: null,
     timerInterval: null,
+    isLastQuestion: false,
   };
   setActiveSession(sessionId, active);
 
@@ -336,6 +347,16 @@ function flushPendingUserText(sessionId: string): void {
     `[Transcript] User (${session.transcript.length}): "${entry.text.slice(0, 80)}..."`
   );
   session.pendingUserText = "";
+
+  // If this was the last question (due to time warning or AI-initiated last question),
+  // end the session after the user finishes their answer
+  if (session.isLastQuestion && session.status === "live") {
+    console.log(`[WS] Last question answered for session ${sessionId}, ending session`);
+    // Give a small delay for the final audio to complete
+    setTimeout(() => {
+      cleanupSession(sessionId, "COMPLETED");
+    }, 2000);
+  }
 }
 
 // Flush accumulated model transcription text as a transcript entry
@@ -386,12 +407,24 @@ function flushPendingModelText(sessionId: string): void {
     }
   }
 
-  // Check for end keyword
+  // Check for end keyword or last question signals
   if (fullText.includes("END_INTERVIEW")) {
     console.log(
       `[Gemini] END_INTERVIEW detected for session ${sessionId}`
     );
     cleanupSession(sessionId, "COMPLETED");
+    return;
+  }
+
+  // Check if model explicitly indicates this is the last question
+  const lastQuestionKeywords = ["last question", "final question", "this is my last", "final round"];
+  const isLastQuestion = lastQuestionKeywords.some(keyword =>
+    fullText.toLowerCase().includes(keyword)
+  );
+
+  if (isLastQuestion && !session.isLastQuestion) {
+    console.log(`[Gemini] Last question detected for session ${sessionId}`);
+    session.isLastQuestion = true;
   }
 }
 
