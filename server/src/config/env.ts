@@ -16,6 +16,9 @@ export const env = {
   get PORT() {
     return parseInt(process.env.PORT || "8080", 10);
   },
+  get DEBUG() {
+    return process.env.DEBUG === "true";
+  },
   get JWT_SECRET() {
     return requireEnv("JWT_SECRET");
   },
