@@ -196,6 +196,8 @@ export function useLiveSession(sessionId: string) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
+  const [timeWarning, setTimeWarning] = useState<number | null>(null);
+  const [timeLoaded, setTimeLoaded] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -224,6 +226,10 @@ export function useLiveSession(sessionId: string) {
     }
   }, []);
 
+  const dismissWarning = useCallback(() => {
+    setTimeWarning(null);
+  }, []);
+
   const toggleMute = useCallback(() => {
     const stream = recorderStreamRef.current;
     if (!stream) return;
@@ -237,7 +243,7 @@ export function useLiveSession(sessionId: string) {
     let cancelled = false;
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${location.host}/ws/interview/${sessionId}`;
+    const wsUrl = `${protocol}//localhost:8080/ws/interview/${sessionId}`;
     console.log("[LiveSession] Connecting to", wsUrl);
 
     const ws = new WebSocket(wsUrl);
@@ -426,10 +432,9 @@ export function useLiveSession(sessionId: string) {
             if (msg.status === "LIVE") {
               await initPlayer();
               await startRecorder();
-              startTimeRef.current = Date.now();
-              timerRef.current = setInterval(() => {
-                setElapsedMs(Date.now() - startTimeRef.current);
-              }, 1000);
+              // Reset time state - wait for server timeUpdate
+              setElapsedMs(0);
+              setTimeLoaded(false);
             }
             if (msg.status === "COMPLETED" || msg.status === "ERROR") {
               cleanup();
@@ -450,6 +455,15 @@ export function useLiveSession(sessionId: string) {
           case "error":
             console.error("[LiveSession] Error:", msg.message);
             setError(msg.message as string);
+            break;
+          case "timeUpdate":
+            // Server sends countdown remaining time
+            setElapsedMs(msg.remainingMs);
+            setTimeLoaded(true);
+            break;
+          case "timeWarning":
+            console.log("[LiveSession] Time warning:", msg.remainingSeconds);
+            setTimeWarning(msg.remainingSeconds);
             break;
         }
       } catch {
@@ -535,5 +549,8 @@ export function useLiveSession(sessionId: string) {
     endSession,
     elapsedMs,
     videoStream,
+    timeWarning,
+    dismissWarning,
+    timeLoaded,
   };
 }

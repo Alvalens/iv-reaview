@@ -27,6 +27,9 @@ export function InterviewPage() {
     endSession,
     elapsedMs,
     videoStream,
+    timeWarning,
+    dismissWarning,
+    timeLoaded,
   } = useLiveSession(id!);
 
   // Camera preview ref
@@ -131,6 +134,30 @@ export function InterviewPage() {
   // Live interview UI
   return (
     <div className="flex h-[calc(100vh-5rem)] flex-col">
+      {/* Time Warning Dialog */}
+      {timeWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="mx-4 max-w-md rounded-lg border border-border bg-card p-6 shadow-lg">
+            <div className="flex flex-col items-center text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/20">
+                <span className="text-3xl">
+                  <Loader2 className="h-8 w-8 text-amber-500" />
+                </span>
+              </div>
+              <h2 className="mb-2 text-xl font-semibold text-foreground">
+                Interview Time Ending Soon
+              </h2>
+              <p className="mb-6 text-muted-foreground">
+                Your interview will end in <span className="font-semibold text-amber-500">{timeWarning} seconds</span>.
+                Please wrap up your current answer.
+              </p>
+              <Button onClick={dismissWarning} className="w-full">
+                Continue Interview
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Top bar */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-3">
@@ -166,7 +193,7 @@ export function InterviewPage() {
             </div>
           )}
           <span className="font-mono text-lg text-foreground">
-            {formatTime(elapsedMs)}
+            {timeLoaded ? formatTime(elapsedMs) : "--:--"}
           </span>
           {modelReady ? (
             <span className="flex items-center gap-1.5 text-xs text-emerald-400">

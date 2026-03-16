@@ -30,6 +30,11 @@ export interface ActiveSession {
   scoringContext: ScoringContext;
   /** Grace period: don't forward mic audio until model starts speaking */
   audioForwardingEnabled: boolean;
+  /** Session timeout timers */
+  sessionTimeout: ReturnType<typeof setTimeout> | null;
+  warningTimeout: ReturnType<typeof setTimeout> | null;
+  /** Interval for sending time updates to client */
+  timerInterval: ReturnType<typeof setInterval> | null;
 }
 
 const activeSessions = new Map<string, ActiveSession>();

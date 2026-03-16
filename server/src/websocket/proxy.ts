@@ -33,6 +33,67 @@ function sendToClient(ws: WebSocket, msg: ServerWSMessage): void {
   }
 }
 
+// Session timeout constants (in milliseconds)
+const SESSION_DURATION_MS = 10 * 60 * 1000; // 10 minutes
+const WARNING_BEFORE_MS = 60 * 1000; // 1 minute before end
+
+function startSessionTimeout(sessionId: string): void {
+  const session = getActiveSession(sessionId);
+  if (!session) return;
+
+  const startTime = Date.now();
+  console.log(`[Timeout] Starting 10-minute session timeout for ${sessionId}`);
+
+  // Send initial time immediately
+  sendToClient(session.clientWs, { type: "timeUpdate", remainingMs: SESSION_DURATION_MS });
+
+  // Send time update every second
+  session.timerInterval = setInterval(() => {
+    const s = getActiveSession(sessionId);
+    if (!s || s.status !== "live") return;
+
+    const elapsed = Date.now() - startTime;
+    const remaining = Math.max(0, SESSION_DURATION_MS - elapsed);
+    sendToClient(s.clientWs, { type: "timeUpdate", remainingMs: remaining });
+  }, 1000);
+
+  // Warning at 9 minutes (1 minute before end)
+  session.warningTimeout = setTimeout(() => {
+    const s = getActiveSession(sessionId);
+    if (!s || s.status !== "live") return;
+
+    console.log(`[Timeout] Sending 1-minute warning for session ${sessionId}`);
+    sendToClient(s.clientWs, { type: "timeWarning", remainingSeconds: 60 });
+  }, SESSION_DURATION_MS - WARNING_BEFORE_MS);
+
+  // Force end at 10 minutes
+  session.sessionTimeout = setTimeout(() => {
+    const s = getActiveSession(sessionId);
+    if (!s || s.status !== "live") return;
+
+    console.log(`[Timeout] Session timeout reached for ${sessionId}, ending session`);
+    cleanupSession(sessionId, "COMPLETED");
+  }, SESSION_DURATION_MS);
+}
+
+function clearSessionTimeouts(sessionId: string): void {
+  const session = getActiveSession(sessionId);
+  if (!session) return;
+
+  if (session.timerInterval) {
+    clearInterval(session.timerInterval);
+    session.timerInterval = null;
+  }
+  if (session.warningTimeout) {
+    clearTimeout(session.warningTimeout);
+    session.warningTimeout = null;
+  }
+  if (session.sessionTimeout) {
+    clearTimeout(session.sessionTimeout);
+    session.sessionTimeout = null;
+  }
+}
+
 export async function handleWebSocketConnection(
   ws: WebSocket,
   sessionId: string
@@ -112,6 +173,9 @@ export async function handleWebSocketConnection(
       cvContent: dbSession.cvContent ?? undefined,
     },
     audioForwardingEnabled: false,
+    sessionTimeout: null,
+    warningTimeout: null,
+    timerInterval: null,
   };
   setActiveSession(sessionId, active);
 
@@ -355,6 +419,9 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
         );
 
       sendToClient(session.clientWs, { type: "status", status: "LIVE" });
+
+      // Start 10-minute session timeout with warning
+      startSessionTimeout(sessionId);
     },
 
     onAudioData: (base64Pcm24: string) => {
@@ -616,6 +683,9 @@ async function cleanupSession(
     clearTimeout(session.modelSpeakingTimeout);
     session.modelSpeakingTimeout = null;
   }
+
+  // Clear session timeout timers
+  clearSessionTimeouts(sessionId);
 
   // Close Gemini connection
   if (session.geminiSession) {
