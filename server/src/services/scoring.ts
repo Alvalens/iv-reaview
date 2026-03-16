@@ -45,7 +45,7 @@ function buildWavBuffer(pcmChunks: Buffer[], sampleRate = 16000): Buffer {
   return wav;
 }
 
-// --- Weighted Score Calculation (mirrors intervyou) ---
+// --- Weighted Score Calculation (mirrors interview) ---
 
 export function calculateWeightedScore(
   content: number,

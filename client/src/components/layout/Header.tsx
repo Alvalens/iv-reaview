@@ -35,7 +35,7 @@ export function Header() {
             <Mic className="h-4 w-4 text-primary" />
           </div>
           <span className="text-lg font-semibold text-foreground">
-            Intervyou <span className="text-quaternary">Live</span>
+            interview <span className="text-quaternary">Live</span>
           </span>
         </Link>
 
