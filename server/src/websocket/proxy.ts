@@ -191,13 +191,13 @@ export async function handleWebSocketConnection(
       }
 
       // Log when audio starts being forwarded after model was speaking
-      const lastChunkCount = (session as any).lastGatedChunkCount || 0;
+      const lastChunkCount = session.lastGatedChunkCount ?? 0;
       if (audioChunkCount > lastChunkCount + 10) {
         console.log(
           `[WS] Audio forwarding resumed — chunk #${audioChunkCount} (was gated at #${lastChunkCount})`
         );
       }
-      (session as any).lastGatedChunkCount = audioChunkCount;
+      session.lastGatedChunkCount = audioChunkCount;
 
       // Log first 3 chunks and then every 5 seconds
       const now = Date.now();
@@ -296,13 +296,8 @@ function flushPendingModelText(sessionId: string): void {
     timestamp: Date.now() - session.startedAt,
   };
 
-  // Check if the last entry is a partial model transcript - replace it instead of adding duplicate
-  const lastIndex = session.transcript.length - 1;
-  if (lastIndex >= 0 && session.transcript[lastIndex].role === "model" && session.transcript[lastIndex].partial) {
-    session.transcript[lastIndex] = entry;
-  } else {
-    session.transcript.push(entry);
-  }
+  // Store the finalized model transcript entry
+  session.transcript.push(entry);
 
   sendToClient(session.clientWs, { type: "transcript", entry });
   console.log(
@@ -443,22 +438,25 @@ function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
 
       session.pendingModelText += text;
 
-      // Send partial transcript updates with throttling (every 200ms) or immediately when finished
+      // Send partial transcript updates with throttling (every 200ms).
+      // The final transcript is sent via flushPendingModelText() when finished is true.
       const now = Date.now();
-      const shouldSendPartial = !finished && (now - lastPartialTranscriptTime >= PARTIAL_TRANSCRIPT_INTERVAL_MS);
+      const shouldSendPartial =
+        !finished &&
+        now - lastPartialTranscriptTime >= PARTIAL_TRANSCRIPT_INTERVAL_MS;
 
-      if (finished || shouldSendPartial) {
+      if (shouldSendPartial) {
         lastPartialTranscriptTime = now;
         const partialEntry: TranscriptEntry = {
           role: "model",
           text: session.pendingModelText,
           timestamp: Date.now() - session.startedAt,
-          partial: !finished,
+          partial: true,
         };
         sendToClient(session.clientWs, { type: "transcript", entry: partialEntry });
       }
 
-      // Flush if API sends finished flag
+      // Flush if API sends finished flag; this will send the final transcript once.
       if (finished) {
         flushPendingModelText(sessionId);
       }

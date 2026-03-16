@@ -30,6 +30,8 @@ export interface ActiveSession {
   scoringContext: ScoringContext;
   /** Grace period: don't forward mic audio until model starts speaking */
   audioForwardingEnabled: boolean;
+  /** Track last audio chunk count for detecting when forwarding resumes after being gated */
+  lastGatedChunkCount?: number;
 }
 
 const activeSessions = new Map<string, ActiveSession>();

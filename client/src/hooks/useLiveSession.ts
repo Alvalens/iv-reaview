@@ -519,12 +519,12 @@ export function useLiveSession(sessionId: string) {
           case "transcript": {
             const entry = msg.entry as TranscriptEntry;
             setTranscript((prev) => {
-              // If this is a partial transcript, update the last model entry in place
-              if (entry.partial && prev.length > 0) {
+              // If the last entry is a partial for the same role, update it in place
+              if (prev.length > 0) {
                 const lastIndex = prev.length - 1;
                 const lastEntry = prev[lastIndex];
-                if (lastEntry && lastEntry.role === "model") {
-                  // Update the last model transcript
+                // Replace when: last entry is partial AND same role (handles both partial→partial and partial→final)
+                if (lastEntry && lastEntry.partial && lastEntry.role === entry.role) {
                   const updated = [...prev];
                   updated[lastIndex] = entry;
                   return updated;

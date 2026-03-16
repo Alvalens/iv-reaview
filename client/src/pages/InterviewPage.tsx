@@ -73,7 +73,7 @@ export function InterviewPage() {
   // Connecting state
   if (status === "CREATED") {
     return (
-      <div className="flex h-[calc(100vh-5rem)] flex-col items-center justify-center">
+      <div className="relative flex h-[calc(100vh-5rem)] flex-col items-center justify-center">
         {/* Full screen dark background */}
         <div className="absolute inset-0 bg-gradient-to-b from-primary/20 to-primary" />
 
@@ -96,7 +96,7 @@ export function InterviewPage() {
   // Error state
   if (status === "ERROR") {
     return (
-      <div className="flex h-[calc(100vh-5rem)] flex-col items-center justify-center">
+      <div className="relative flex h-[calc(100vh-8rem)] flex-col items-center justify-center">
         <div className="absolute inset-0 bg-gradient-to-b from-primary/20 to-primary" />
         <div className="relative z-10 flex flex-col items-center space-y-6">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/20">
@@ -119,7 +119,7 @@ export function InterviewPage() {
   // Completed state
   if (status === "COMPLETED") {
     return (
-      <div className="flex h-[calc(100vh-5rem)] flex-col items-center justify-center">
+      <div className="relative flex h-[calc(100vh-8rem)] flex-col items-center justify-center">
         <div className="absolute inset-0 bg-gradient-to-b from-primary/20 to-primary" />
         <div className="relative z-10 flex flex-col items-center space-y-6">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-quaternary/20">
@@ -138,7 +138,7 @@ export function InterviewPage() {
 
   // Live interview UI - Google Meet style
   return (
-    <div className="relative flex h-[calc(100vh-5rem)] flex-col overflow-hidden">
+    <div className="relative flex h-[calc(100vh-8rem)] flex-col overflow-hidden">
       {/* Background gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-primary/30 via-primary/20 to-primary/40" />
 
