@@ -1,3 +1,5 @@
+import type { LucideProps } from "lucide-react";
+
 // Session status
 export type SessionStatus =
     | "CREATED"
@@ -23,9 +25,10 @@ export interface PersonaConfig {
     quirks: string[];
     avatar: {
         emoji: string;
-        icon?: React.ComponentType;
+        icon?: React.ComponentType<LucideProps>;
         color: string;
         gradient: string;
+        image?: string;
     };
 }
 

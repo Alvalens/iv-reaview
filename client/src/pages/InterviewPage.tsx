@@ -52,7 +52,7 @@ export function InterviewPage() {
         return JSON.parse(session.personaConfig) as {
           name: string;
           interviewStyle: string;
-          avatar: { emoji: string; gradient: string };
+          avatar: { emoji: string; gradient: string; image?: string };
         };
       } catch {
         return null;
@@ -148,9 +148,21 @@ export function InterviewPage() {
         <div className="flex items-center gap-4">
           {persona && (
             <div
-              className={`flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br shadow-lg ring-2 ring-white/10 ${persona.avatar.gradient}`}
+              className={`flex h-12 w-12 items-center justify-center rounded-full shadow-lg ring-2 ring-white/10 ${persona.avatar.gradient} ${persona.avatar.image ? "p-[2px]" : ""}`}
             >
-              <span className="text-xl">{persona.avatar.emoji}</span>
+              {persona.avatar.image ? (
+                <div className="h-full w-full rounded-full bg-black/20">
+                  <img
+                    src={persona.avatar.image}
+                    alt={persona.name}
+                    className="h-full w-full rounded-full object-cover"
+                  />
+                </div>
+              ) : (
+                <div className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${persona.avatar.gradient}`}>
+                  <span className="text-xl">{persona.avatar.emoji}</span>
+                </div>
+              )}
             </div>
           )}
           <div>
@@ -208,11 +220,23 @@ export function InterviewPage() {
             {/* Persona avatar - smaller to show visualizer around */}
             {persona && (
               <div
-                className={`relative z-10 flex h-32 w-32 items-center justify-center rounded-full bg-gradient-to-br shadow-2xl ${persona.avatar.gradient} md:h-40 md:w-40`}
+                className={`relative z-10 flex h-32 w-32 items-center justify-center rounded-full shadow-2xl ring-4 ring-white/20 ${persona.avatar.gradient} md:h-40 md:w-40`}
               >
-                <span className="text-5xl md:text-6xl">
-                  {persona.avatar.emoji}
-                </span>
+                {persona.avatar.image ? (
+                  <div className="h-full w-full rounded-full bg-black/20">
+                    <img
+                      src={persona.avatar.image}
+                      alt={persona.name}
+                      className="h-full w-full rounded-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${persona.avatar.gradient}`}>
+                    <span className="text-5xl md:text-6xl">
+                      {persona.avatar.emoji}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </div>

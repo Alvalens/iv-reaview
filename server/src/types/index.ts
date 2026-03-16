@@ -26,6 +26,7 @@ export interface PersonaConfig {
     emoji: string;
     color: string;
     gradient: string;
+    image?: string;
   };
 }
 

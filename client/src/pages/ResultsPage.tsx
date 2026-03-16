@@ -384,15 +384,27 @@ export function ResultsPage() {
                             <div className="relative group">
                                 <div className="absolute -inset-1 bg-gradient-to-br from-[#1FB6FF]/30 to-[#22C55E]/30 rounded-full blur-md group-hover:blur-lg transition-all" />
                                 <div
-                                    className={`relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br ${persona.avatar.gradient} shadow-lg`}
+                                    className={`relative flex h-14 w-14 items-center justify-center rounded-full shadow-lg ring-2 ring-white/20 ${persona.avatar.gradient}`}
                                 >
-                                    {persona.avatar?.icon ? (
-                                        (() => {
-                                            const Icon = persona.avatar.icon as React.ComponentType<{ className?: string }>;
-                                            return Icon ? <Icon className="h-10 w-10 text-white" /> : null;
-                                        })()
+                                    {persona.avatar.image ? (
+                                        <div className="h-full w-full rounded-full bg-black/30">
+                                            <img
+                                                src={persona.avatar.image}
+                                                alt={persona.name}
+                                                className="h-full w-full rounded-full object-cover"
+                                            />
+                                        </div>
                                     ) : (
-                                        <User className="h-7 w-7 text-white" />
+                                        <div className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${persona.avatar.gradient}`}>
+                                            {persona.avatar?.icon ? (
+                                                (() => {
+                                                    const Icon = persona.avatar.icon as React.ComponentType<{ className?: string }>;
+                                                    return Icon ? <Icon className="h-10 w-10 text-white" /> : null;
+                                                })()
+                                            ) : (
+                                                <User className="h-7 w-7 text-white" />
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             </div>
