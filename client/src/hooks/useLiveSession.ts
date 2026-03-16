@@ -213,6 +213,8 @@ export function useLiveSession(sessionId: string) {
   const [isMuted, setIsMuted] = useState(false);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
   const [audioLevel, setAudioLevel] = useState(0); // 0-1 normalized amplitude
+  const [timeWarning, setTimeWarning] = useState<number | null>(null);
+  const [timeLoaded, setTimeLoaded] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -244,6 +246,10 @@ export function useLiveSession(sessionId: string) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "control", action: "end" }));
     }
+  }, []);
+
+  const dismissWarning = useCallback(() => {
+    setTimeWarning(null);
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -513,10 +519,9 @@ export function useLiveSession(sessionId: string) {
             if (msg.status === "LIVE") {
               await initPlayer();
               await startRecorder();
-              startTimeRef.current = Date.now();
-              timerRef.current = setInterval(() => {
-                setElapsedMs(Date.now() - startTimeRef.current);
-              }, 1000);
+              // Reset time state - wait for server timeUpdate
+              setElapsedMs(0);
+              setTimeLoaded(false);
             }
             if (msg.status === "COMPLETED" || msg.status === "ERROR") {
               cleanup();
@@ -550,6 +555,15 @@ export function useLiveSession(sessionId: string) {
           case "error":
             console.error("[LiveSession] Error:", msg.message);
             setError(msg.message as string);
+            break;
+          case "timeUpdate":
+            // Server sends countdown remaining time
+            setElapsedMs(msg.remainingMs);
+            setTimeLoaded(true);
+            break;
+          case "timeWarning":
+            console.log("[LiveSession] Time warning:", msg.remainingSeconds);
+            setTimeWarning(msg.remainingSeconds);
             break;
         }
       } catch {
@@ -642,5 +656,8 @@ export function useLiveSession(sessionId: string) {
     elapsedMs,
     videoStream,
     audioLevel,
+    timeWarning,
+    dismissWarning,
+    timeLoaded,
   };
 }

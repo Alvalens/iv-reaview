@@ -14,7 +14,7 @@
   "dependencies": {
     "@google/genai": "^1.43.0",
     "@prisma/adapter-better-sqlite3": "^7.4.2",
-    "@prisma/client": "^7.4.1",
+    "@prisma/client": "^7.4.2",
     "@prisma/client-runtime-utils": "^7.4.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.6.2",
@@ -40,8 +40,9 @@
     "@types/express": "^5.0.2",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^1.4.12",
+    "@types/node": "^25.5.0",
     "@types/ws": "^8.18.1",
-    "prisma": "^7.4.1",
+    "prisma": "^7.4.2",
     "tsx": "^4.21.0",
     "typescript": "^5.8.3"
   }

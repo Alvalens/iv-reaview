@@ -131,4 +131,6 @@ export type ServerWSMessage =
   | { type: "status"; status: SessionStatus }
   | { type: "error"; message: string }
   | { type: "interrupt" } // signals client to clear audio playback buffer
-  | { type: "turnComplete" }; // signals model finished speaking
+  | { type: "turnComplete" } // signals model finished speaking
+  | { type: "timeUpdate"; remainingMs: number } // countdown timer update every second
+  | { type: "timeWarning"; remainingSeconds: number }; // 1 minute warning before timeout

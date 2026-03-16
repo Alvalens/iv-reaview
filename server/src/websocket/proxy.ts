@@ -2,726 +2,882 @@ import type { WebSocket } from "ws";
 import { prisma } from "../db/prisma.js";
 import { env } from "../config/env.js";
 import {
-  buildSystemPrompt,
-  buildContextMessage,
+    buildSystemPrompt,
+    buildContextMessage,
 } from "../services/persona-generator.js";
 import {
-  connectToGemini,
-  sendAudioToGemini,
-  sendContextToGemini,
-  closeGeminiSession,
-  type GeminiLiveCallbacks,
+    connectToGemini,
+    sendAudioToGemini,
+    sendContextToGemini,
+    closeGeminiSession,
+    type GeminiLiveCallbacks,
 } from "../services/gemini-live.js";
 import {
-  getActiveSession,
-  setActiveSession,
-  deleteActiveSession,
-  hasActiveSession,
-  type ActiveSession,
+    getActiveSession,
+    setActiveSession,
+    deleteActiveSession,
+    hasActiveSession,
+    type ActiveSession,
 } from "./session-manager.js";
 import type {
-  ClientWSMessage,
-  ServerWSMessage,
-  TranscriptEntry,
-  PersonaConfig,
-  InterviewType,
+    ClientWSMessage,
+    ServerWSMessage,
+    TranscriptEntry,
+    PersonaConfig,
+    InterviewType,
 } from "../types/index.js";
 import { scoreQuestion } from "../services/scoring.js";
 
 function sendToClient(ws: WebSocket, msg: ServerWSMessage): void {
-  if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
+    if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify(msg));
+    }
+}
+
+// Session timeout constants (in milliseconds)
+const DEFAULT_SESSION_DURATION_MS = 10 * 60 * 1000; // Default: 10 minutes
+const WARNING_BEFORE_MS = 60 * 1000; // 1 minute before end
+
+type TimedActiveSession = ActiveSession & { sessionDurationMs?: number };
+
+async function startSessionTimeout(sessionId: string): Promise<void> {
+    const baseSession = getActiveSession(sessionId) as TimedActiveSession | null;
+    if (!baseSession) return;
+
+    // Attempt to load the configured duration (in seconds) from the DB
+    let dbDurationMs: number | undefined;
+    try {
+        const dbSession = await prisma.interviewSession.findUnique({
+            where: { id: sessionId },
+            select: { duration: true },
+        });
+        if (dbSession && typeof dbSession.duration === "number" && dbSession.duration > 0) {
+            // Convert seconds from the DB into milliseconds
+            dbDurationMs = dbSession.duration * 1000;
+        }
+    } catch (err) {
+        console.error(
+            `[Timeout] Failed to load duration for session ${sessionId} from DB, falling back to defaults`,
+            err
+        );
+    }
+
+    // Resolve effective session duration (ms): DB-configured > per-session > default
+    const sessionDurationMs =
+        (typeof dbDurationMs === "number" && dbDurationMs > 0
+            ? dbDurationMs
+            : typeof baseSession.sessionDurationMs === "number" && baseSession.sessionDurationMs > 0
+                ? baseSession.sessionDurationMs
+                : DEFAULT_SESSION_DURATION_MS);
+    // Persist the resolved duration on the active session so subsequent reads are consistent
+    baseSession.sessionDurationMs = sessionDurationMs;
+
+    const startTime = Date.now();
+    console.log(
+        `[Timeout] Starting session timeout for ${sessionId} with duration ${sessionDurationMs} ms`
+    );
+
+    // Send initial time immediately
+    sendToClient(baseSession.clientWs, {
+        type: "timeUpdate",
+        remainingMs: sessionDurationMs,
+    });
+
+    // Send time update every second
+    baseSession.timerInterval = setInterval(() => {
+        const s = getActiveSession(sessionId) as TimedActiveSession | null;
+        if (!s || s.status !== "live") return;
+
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.max(0, (s.sessionDurationMs ?? sessionDurationMs) - elapsed);
+        sendToClient(s.clientWs, { type: "timeUpdate", remainingMs: remaining });
+    }, 1000);
+
+    // Warning at 9 minutes (1 minute before end)
+    if (sessionDurationMs > WARNING_BEFORE_MS) {
+        baseSession.warningTimeout = setTimeout(() => {
+            const s = getActiveSession(sessionId) as TimedActiveSession | null;
+            if (!s || s.status !== "live") return;
+
+            console.log(`[Timeout] Sending 1-minute warning for session ${sessionId}`);
+            // Mark this as the last question - time is running out
+            s.isLastQuestion = true;
+            sendToClient(s.clientWs, { type: "timeWarning", remainingSeconds: 60 });
+
+            // Notify Gemini that this is the final question due to time constraints
+            if (s.geminiSession) {
+                sendContextToGemini(
+                    s.geminiSession,
+                    "[SYSTEM] Time is running out. This is your last question. Please ask your final question now and then wrap up the interview after the user's answer."
+                );
+            }
+        }, sessionDurationMs - WARNING_BEFORE_MS);
+    }
+
+    // Force end when the configured duration elapses
+    baseSession.sessionTimeout = setTimeout(() => {
+        const s = getActiveSession(sessionId);
+        if (!s || s.status !== "live") return;
+
+        console.log(`[Timeout] Session timeout reached for ${sessionId}, ending session`);
+        cleanupSession(sessionId, "COMPLETED");
+    }, sessionDurationMs);
+}
+
+function clearSessionTimeouts(sessionId: string): void {
+    const session = getActiveSession(sessionId);
+    if (!session) return;
+
+    if (session.timerInterval) {
+        clearInterval(session.timerInterval);
+        session.timerInterval = null;
+    }
+    if (session.warningTimeout) {
+        clearTimeout(session.warningTimeout);
+        session.warningTimeout = null;
+    }
+    if (session.sessionTimeout) {
+        clearTimeout(session.sessionTimeout);
+        session.sessionTimeout = null;
+    }
 }
 
 export async function handleWebSocketConnection(
-  ws: WebSocket,
-  sessionId: string
+    ws: WebSocket,
+    sessionId: string
 ): Promise<void> {
-  console.log(`[WS] Client connected for session: ${sessionId}`);
+    console.log(`[WS] Client connected for session: ${sessionId}`);
 
-  // Guard: no duplicate connections
-  if (hasActiveSession(sessionId)) {
-    sendToClient(ws, {
-      type: "error",
-      message: "Session already has an active connection",
-    });
-    ws.close(4409, "Session already active");
-    return;
-  }
-
-  // Validate session in DB
-  const dbSession = await prisma.interviewSession.findUnique({
-    where: { id: sessionId },
-  });
-
-  if (!dbSession) {
-    sendToClient(ws, { type: "error", message: "Session not found" });
-    ws.close(4404, "Session not found");
-    return;
-  }
-
-  if (dbSession.status !== "CREATED") {
-    sendToClient(ws, {
-      type: "error",
-      message: `Session is in ${dbSession.status} state, expected CREATED`,
-    });
-    ws.close(4409, "Invalid session state");
-    return;
-  }
-
-  // Build system instruction (short — persona + rules only)
-  // Job description + CV sent separately via sendClientContent after setup
-  // to avoid Gemini Live API silent hang bug with long system instructions
-  const persona: PersonaConfig = JSON.parse(dbSession.personaConfig);
-  const systemPrompt = buildSystemPrompt(persona, {
-    jobTitle: dbSession.jobTitle,
-    companyName: dbSession.companyName,
-    interviewType: dbSession.interviewType as InterviewType,
-  });
-  const contextMessage = buildContextMessage({
-    jobTitle: dbSession.jobTitle,
-    companyName: dbSession.companyName,
-    jobDescription: dbSession.jobDescription,
-    cvContent: dbSession.cvContent ?? undefined,
-  });
-
-  // Register active session
-  const active: ActiveSession = {
-    sessionId,
-    clientWs: ws,
-    geminiSession: null,
-    persona,
-    transcript: [],
-    startedAt: Date.now(),
-    resumptionHandle: null,
-    status: "connecting",
-    pendingUserText: "",
-    pendingModelText: "",
-    modelSpeaking: false,
-    modelSpeakingTimeout: null,
-    currentQuestionIndex: 0,
-    currentTurnAudioChunks: [],
-    currentTurnVideoSnapshots: [],
-    scoringContext: {
-      interviewType: dbSession.interviewType as InterviewType,
-      jobTitle: dbSession.jobTitle,
-      companyName: dbSession.companyName,
-      jobDescription: dbSession.jobDescription,
-      personaName: persona.name,
-      personaStyle: persona.interviewStyle,
-      cvContent: dbSession.cvContent ?? undefined,
-    },
-    audioForwardingEnabled: false,
-  };
-  setActiveSession(sessionId, active);
-
-  sendToClient(ws, { type: "status", status: "CREATED" });
-
-  // Connect to Gemini Live API
-  try {
-    const geminiCallbacks = buildGeminiCallbacks(sessionId);
-    const geminiSession = await connectToGemini({
-      systemPrompt,
-      voiceName: persona.voiceName,
-      callbacks: geminiCallbacks,
-    });
-    active.geminiSession = geminiSession;
-
-    // Send job description + CV as context after connection is established.
-    // This avoids the Gemini Live API bug where long system instructions
-    // cause the model to silently hang in audio-only mode.
-    sendContextToGemini(geminiSession, contextMessage);
-  } catch (err) {
-    console.error(
-      `[WS] Failed to connect to Gemini for session ${sessionId}:`,
-      err
-    );
-    sendToClient(ws, {
-      type: "error",
-      message: "Failed to connect to AI interviewer",
-    });
-    await cleanupSession(sessionId, "ERROR");
-    ws.close(1011, "Gemini connection failed");
-    return;
-  }
-
-  // Wire client message handlers
-  let audioChunkCount = 0;
-  let audioByteTotal = 0;
-  let lastAudioLogTime = 0;
-
-  // Grace period: don't forward mic audio until model starts speaking or 3s passes.
-  // This lets the model process the system prompt and start its greeting
-  // without misinterpreting ambient mic noise as "user is speaking".
-  setTimeout(() => {
-    const s = getActiveSession(sessionId);
-    if (s && !s.audioForwardingEnabled) {
-      s.audioForwardingEnabled = true;
-      console.log(`[WS] Audio forwarding enabled (timeout) for session ${sessionId}`);
-    }
-  }, 3000);
-
-  ws.on("message", (data, isBinary) => {
-    const session = getActiveSession(sessionId);
-    if (!session?.geminiSession || session.status !== "live") return;
-
-    if (isBinary) {
-      // Binary frame = raw PCM16 audio from client mic
-      const buffer = data as Buffer;
-      audioChunkCount++;
-      audioByteTotal += buffer.length;
-
-      // Grace period: skip forwarding audio until model has started speaking
-      if (!session.audioForwardingEnabled) {
-        // Still buffer for per-question scoring
-        session.currentTurnAudioChunks.push(Buffer.from(buffer));
+    // Guard: no duplicate connections
+    if (hasActiveSession(sessionId)) {
+        sendToClient(ws, {
+            type: "error",
+            message: "Session already has an active connection",
+        });
+        ws.close(4409, "Session already active");
         return;
-      }
+    }
 
-      // Audio gating: don't forward mic audio while model is speaking
-      // This prevents echo feedback where the model hears its own output
-      if (session.modelSpeaking) {
-        // Record the last chunk number that was gated while the model is speaking
-        session.lastGatedChunkCount = audioChunkCount;
-        if (audioChunkCount % 100 === 0) {
-          console.log(
-            `[WS] Audio gated (model speaking) — chunk #${audioChunkCount}`
-          );
+    // Validate session in DB
+    const dbSession = await prisma.interviewSession.findUnique({
+        where: { id: sessionId },
+    });
+
+    if (!dbSession) {
+        sendToClient(ws, { type: "error", message: "Session not found" });
+        ws.close(4404, "Session not found");
+        return;
+    }
+
+    if (dbSession.status !== "CREATED") {
+        sendToClient(ws, {
+            type: "error",
+            message: `Session is in ${dbSession.status} state, expected CREATED`,
+        });
+        ws.close(4409, "Invalid session state");
+        return;
+    }
+
+    // Build system instruction (short — persona + rules only)
+    // Job description + CV sent separately via sendClientContent after setup
+    // to avoid Gemini Live API silent hang bug with long system instructions
+    const persona: PersonaConfig = JSON.parse(dbSession.personaConfig);
+    const systemPrompt = buildSystemPrompt(persona, {
+        jobTitle: dbSession.jobTitle,
+        companyName: dbSession.companyName,
+        interviewType: dbSession.interviewType as InterviewType,
+    });
+    const contextMessage = buildContextMessage({
+        jobTitle: dbSession.jobTitle,
+        companyName: dbSession.companyName,
+        jobDescription: dbSession.jobDescription,
+        cvContent: dbSession.cvContent ?? undefined,
+    });
+
+    // Register active session
+    const active: ActiveSession = {
+        sessionId,
+        clientWs: ws,
+        geminiSession: null,
+        persona,
+        transcript: [],
+        startedAt: Date.now(),
+        resumptionHandle: null,
+        status: "connecting",
+        pendingUserText: "",
+        pendingModelText: "",
+        modelSpeaking: false,
+        modelSpeakingTimeout: null,
+        currentQuestionIndex: 0,
+        currentTurnAudioChunks: [],
+        currentTurnVideoSnapshots: [],
+        scoringContext: {
+            interviewType: dbSession.interviewType as InterviewType,
+            jobTitle: dbSession.jobTitle,
+            companyName: dbSession.companyName,
+            jobDescription: dbSession.jobDescription,
+            personaName: persona.name,
+            personaStyle: persona.interviewStyle,
+            cvContent: dbSession.cvContent ?? undefined,
+        },
+        audioForwardingEnabled: false,
+        sessionTimeout: null,
+        warningTimeout: null,
+        timerInterval: null,
+        isLastQuestion: false,
+    };
+    setActiveSession(sessionId, active);
+
+    sendToClient(ws, { type: "status", status: "CREATED" });
+
+    // Connect to Gemini Live API
+    try {
+        const geminiCallbacks = buildGeminiCallbacks(sessionId);
+        const geminiSession = await connectToGemini({
+            systemPrompt,
+            voiceName: persona.voiceName,
+            callbacks: geminiCallbacks,
+        });
+        active.geminiSession = geminiSession;
+
+        // Send job description + CV as context after connection is established.
+        // This avoids the Gemini Live API bug where long system instructions
+        // cause the model to silently hang in audio-only mode.
+        sendContextToGemini(geminiSession, contextMessage);
+    } catch (err) {
+        console.error(
+            `[WS] Failed to connect to Gemini for session ${sessionId}:`,
+            err
+        );
+        sendToClient(ws, {
+            type: "error",
+            message: "Failed to connect to AI interviewer",
+        });
+        await cleanupSession(sessionId, "ERROR");
+        ws.close(1011, "Gemini connection failed");
+        return;
+    }
+
+    // Wire client message handlers
+    let audioChunkCount = 0;
+    let audioByteTotal = 0;
+    let lastAudioLogTime = 0;
+
+    // Grace period: don't forward mic audio until model starts speaking or 3s passes.
+    // This lets the model process the system prompt and start its greeting
+    // without misinterpreting ambient mic noise as "user is speaking".
+    setTimeout(() => {
+        const s = getActiveSession(sessionId);
+        if (s && !s.audioForwardingEnabled) {
+            s.audioForwardingEnabled = true;
+            console.log(`[WS] Audio forwarding enabled (timeout) for session ${sessionId}`);
         }
-        return;
-      }
+    }, 3000);
 
-      // Log when audio starts being forwarded after model was speaking
-      const lastChunkCount = session.lastGatedChunkCount;
-      if (lastChunkCount !== undefined && audioChunkCount > lastChunkCount + 10) {
+    ws.on("message", (data, isBinary) => {
+        const session = getActiveSession(sessionId);
+        if (!session?.geminiSession || session.status !== "live") return;
+
+        if (isBinary) {
+            // Binary frame = raw PCM16 audio from client mic
+            const buffer = data as Buffer;
+            audioChunkCount++;
+            audioByteTotal += buffer.length;
+
+            // Grace period: skip forwarding audio until model has started speaking
+            if (!session.audioForwardingEnabled) {
+                // Still buffer for per-question scoring
+                session.currentTurnAudioChunks.push(Buffer.from(buffer));
+                return;
+            }
+
+            // Audio gating: don't forward mic audio while model is speaking
+            // This prevents echo feedback where the model hears its own output
+            if (session.modelSpeaking) {
+                // Record the last chunk number that was gated while the model is speaking
+                session.lastGatedChunkCount = audioChunkCount;
+                if (audioChunkCount % 100 === 0) {
+                    console.log(
+                        `[WS] Audio gated (model speaking) — chunk #${audioChunkCount}`
+                    );
+                }
+                return;
+            }
+
+            // Log when audio starts being forwarded after model was speaking
+            const lastChunkCount = session.lastGatedChunkCount;
+            if (lastChunkCount !== undefined && audioChunkCount > lastChunkCount + 10) {
+                console.log(
+                    `[WS] Audio forwarding resumed — chunk #${audioChunkCount} (was gated at #${lastChunkCount})`
+                );
+                // Clear the marker so we only log once per gating period
+                session.lastGatedChunkCount = undefined;
+            }
+
+            // Log first 3 chunks and then every 5 seconds
+            const now = Date.now();
+            if (audioChunkCount <= 3 || now - lastAudioLogTime > 5000) {
+                console.log(
+                    `[WS] Audio chunk #${audioChunkCount} from client: ${buffer.length} bytes (total: ${audioByteTotal} bytes)`
+                );
+                lastAudioLogTime = now;
+            }
+
+            // Buffer audio for per-question scoring
+            session.currentTurnAudioChunks.push(Buffer.from(buffer));
+
+            const base64 = buffer.toString("base64");
+            sendAudioToGemini(session.geminiSession, base64);
+        } else {
+            // Text frame = JSON control message
+            try {
+                const msg = JSON.parse(data.toString()) as ClientWSMessage;
+                handleClientMessage(sessionId, msg);
+            } catch {
+                console.error(`[WS] Invalid JSON from client`);
+            }
+        }
+    });
+
+    ws.on("close", (code, reason) => {
         console.log(
-          `[WS] Audio forwarding resumed — chunk #${audioChunkCount} (was gated at #${lastChunkCount})`
+            `[WS] Client disconnected for session ${sessionId}: ${code} ${reason.toString()}`
         );
-        // Clear the marker so we only log once per gating period
-        session.lastGatedChunkCount = undefined;
-      }
+        cleanupSession(sessionId, "COMPLETED");
+    });
 
-      // Log first 3 chunks and then every 5 seconds
-      const now = Date.now();
-      if (audioChunkCount <= 3 || now - lastAudioLogTime > 5000) {
-        console.log(
-          `[WS] Audio chunk #${audioChunkCount} from client: ${buffer.length} bytes (total: ${audioByteTotal} bytes)`
-        );
-        lastAudioLogTime = now;
-      }
-
-      // Buffer audio for per-question scoring
-      session.currentTurnAudioChunks.push(Buffer.from(buffer));
-
-      const base64 = buffer.toString("base64");
-      sendAudioToGemini(session.geminiSession, base64);
-    } else {
-      // Text frame = JSON control message
-      try {
-        const msg = JSON.parse(data.toString()) as ClientWSMessage;
-        handleClientMessage(sessionId, msg);
-      } catch {
-        console.error(`[WS] Invalid JSON from client`);
-      }
-    }
-  });
-
-  ws.on("close", (code, reason) => {
-    console.log(
-      `[WS] Client disconnected for session ${sessionId}: ${code} ${reason.toString()}`
-    );
-    cleanupSession(sessionId, "COMPLETED");
-  });
-
-  ws.on("error", (error) => {
-    console.error(`[WS] Client WS error for session ${sessionId}:`, error);
-    cleanupSession(sessionId, "ERROR");
-  });
+    ws.on("error", (error) => {
+        console.error(`[WS] Client WS error for session ${sessionId}:`, error);
+        cleanupSession(sessionId, "ERROR");
+    });
 }
 
 function handleClientMessage(
-  sessionId: string,
-  msg: ClientWSMessage
+    sessionId: string,
+    msg: ClientWSMessage
 ): void {
-  const session = getActiveSession(sessionId);
-  if (!session?.geminiSession) return;
+    const session = getActiveSession(sessionId);
+    if (!session?.geminiSession) return;
 
-  switch (msg.type) {
-    case "audio":
-      // Audio sent as JSON base64 (alternative to binary frames)
-      sendAudioToGemini(session.geminiSession, msg.data);
-      break;
+    switch (msg.type) {
+        case "audio":
+            // Audio sent as JSON base64 (alternative to binary frames)
+            sendAudioToGemini(session.geminiSession, msg.data);
+            break;
 
-    case "video":
-      // Accumulate video snapshots for per-question scoring (cap at 5 per turn)
-      if (session.currentTurnVideoSnapshots.length < 5) {
-        session.currentTurnVideoSnapshots.push(msg.data);
-      }
-      break;
+        case "video":
+            // Accumulate video snapshots for per-question scoring (cap at 5 per turn)
+            if (session.currentTurnVideoSnapshots.length < 5) {
+                session.currentTurnVideoSnapshots.push(msg.data);
+            }
+            break;
 
-    case "control":
-      if (msg.action === "end") {
-        console.log(`[WS] Client requested end for session ${sessionId}`);
-        cleanupSession(sessionId, "COMPLETED");
-      }
-      break;
-  }
+        case "control":
+            if (msg.action === "end") {
+                console.log(`[WS] Client requested end for session ${sessionId}`);
+                cleanupSession(sessionId, "COMPLETED");
+            }
+            break;
+    }
 }
 
 // Flush accumulated user transcription text as a transcript entry
 function flushPendingUserText(sessionId: string): void {
-  const session = getActiveSession(sessionId);
-  if (!session || !session.pendingUserText.trim()) return;
+    const session = getActiveSession(sessionId);
+    if (!session || !session.pendingUserText.trim()) return;
 
-  const entry: TranscriptEntry = {
-    role: "user",
-    text: session.pendingUserText.trim(),
-    timestamp: Date.now() - session.startedAt,
-  };
-  session.transcript.push(entry);
-  sendToClient(session.clientWs, { type: "transcript", entry });
-  console.log(
-    `[Transcript] User (${session.transcript.length}): "${entry.text.slice(0, 80)}..."`
-  );
-  session.pendingUserText = "";
+    const entry: TranscriptEntry = {
+        role: "user",
+        text: session.pendingUserText.trim(),
+        timestamp: Date.now() - session.startedAt,
+    };
+    session.transcript.push(entry);
+    sendToClient(session.clientWs, { type: "transcript", entry });
+    console.log(
+        `[Transcript] User (${session.transcript.length}): "${entry.text.slice(0, 80)}..."`
+    );
+    session.pendingUserText = "";
+
+    // If this was the last question (due to time warning or AI-initiated last question),
+    // end the session after the user finishes their answer
+    if (session.isLastQuestion && session.status === "live") {
+        console.log(`[WS] Last question answered for session ${sessionId}, ending session`);
+        // Give a small delay for the final audio to complete
+        setTimeout(() => {
+            cleanupSession(sessionId, "COMPLETED");
+        }, 2000);
+    }
 }
 
 // Flush accumulated model transcription text as a transcript entry
 function flushPendingModelText(sessionId: string): void {
-  const session = getActiveSession(sessionId);
-  if (!session || !session.pendingModelText.trim()) return;
+    const session = getActiveSession(sessionId);
+    if (!session || !session.pendingModelText.trim()) return;
 
-  const fullText = session.pendingModelText.trim();
-  const entry: TranscriptEntry = {
-    role: "model",
-    text: fullText,
-    timestamp: Date.now() - session.startedAt,
-  };
+    const fullText = session.pendingModelText.trim();
+    const entry: TranscriptEntry = {
+        role: "model",
+        text: fullText,
+        timestamp: Date.now() - session.startedAt,
+    };
 
-  // Store the finalized model transcript entry
-  session.transcript.push(entry);
+    // Store the finalized model transcript entry
+    session.transcript.push(entry);
 
-  sendToClient(session.clientWs, { type: "transcript", entry });
-  console.log(
-    `[Transcript] Model (${session.transcript.length}): "${fullText.slice(0, 80)}..."`
-  );
-  session.pendingModelText = "";
-
-  // Detect completed Q&A pair and fire per-question scoring
-  // Pattern: model question (has "?") → user answer → model next turn (current)
-  const t = session.transcript;
-  if (t.length >= 3) {
-    const modelQuestion = t[t.length - 3];
-    const userAnswer = t[t.length - 2];
-    if (
-      modelQuestion.role === "model" &&
-      modelQuestion.text.includes("?") &&
-      userAnswer.role === "user"
-    ) {
-      const qi = session.currentQuestionIndex;
-      const media = {
-        questionIndex: qi,
-        question: modelQuestion.text,
-        answerText: userAnswer.text,
-        audioPcmChunks: [...session.currentTurnAudioChunks],
-        videoSnapshots: [...session.currentTurnVideoSnapshots],
-      };
-      session.currentQuestionIndex++;
-      session.currentTurnAudioChunks = [];
-      session.currentTurnVideoSnapshots = [];
-
-      // Fire-and-forget per-question scoring
-      scoreQuestion(sessionId, media, session.scoringContext).catch((err) =>
-        console.error(`[Scoring] Q${qi} failed:`, err)
-      );
-    }
-  }
-
-  // Check for end keyword
-  if (fullText.includes("END_INTERVIEW")) {
+    sendToClient(session.clientWs, { type: "transcript", entry });
     console.log(
-      `[Gemini] END_INTERVIEW detected for session ${sessionId}`
+        `[Transcript] Model (${session.transcript.length}): "${fullText.slice(0, 80)}..."`
     );
-    cleanupSession(sessionId, "COMPLETED");
-  }
+    session.pendingModelText = "";
+
+    // Detect completed Q&A pair and fire per-question scoring
+    // Pattern: model question (has "?") → user answer → model next turn (current)
+    const t = session.transcript;
+    if (t.length >= 3) {
+        const modelQuestion = t[t.length - 3];
+        const userAnswer = t[t.length - 2];
+        if (
+            modelQuestion.role === "model" &&
+            modelQuestion.text.includes("?") &&
+            userAnswer.role === "user"
+        ) {
+            const qi = session.currentQuestionIndex;
+            const media = {
+                questionIndex: qi,
+                question: modelQuestion.text,
+                answerText: userAnswer.text,
+                audioPcmChunks: [...session.currentTurnAudioChunks],
+                videoSnapshots: [...session.currentTurnVideoSnapshots],
+            };
+            session.currentQuestionIndex++;
+            session.currentTurnAudioChunks = [];
+            session.currentTurnVideoSnapshots = [];
+
+            // Fire-and-forget per-question scoring
+            scoreQuestion(sessionId, media, session.scoringContext).catch((err) =>
+                console.error(`[Scoring] Q${qi} failed:`, err)
+            );
+        }
+    }
+
+    // Check for end keyword or last question signals
+    if (fullText.includes("END_INTERVIEW")) {
+        console.log(
+            `[Gemini] END_INTERVIEW detected for session ${sessionId}`
+        );
+        cleanupSession(sessionId, "COMPLETED");
+        return;
+    }
+
+    // Check if model explicitly indicates this is the last question
+    const lastQuestionKeywords = ["last question", "final question", "this is my last", "final round"];
+    const isLastQuestion = lastQuestionKeywords.some(keyword =>
+        fullText.toLowerCase().includes(keyword)
+    );
+
+    if (isLastQuestion && !session.isLastQuestion) {
+        console.log(`[Gemini] Last question detected for session ${sessionId}`);
+        session.isLastQuestion = true;
+    }
 }
 
 function buildGeminiCallbacks(sessionId: string): GeminiLiveCallbacks {
-  let inputTranscriptCount = 0;
-  let outputTranscriptCount = 0;
+    let inputTranscriptCount = 0;
+    let outputTranscriptCount = 0;
 
-  // Throttling for partial transcript updates
-  let lastPartialTranscriptTime = 0;
-  const PARTIAL_TRANSCRIPT_INTERVAL_MS = 200; // Send partial updates every 200ms
+    // Throttling for partial transcript updates
+    let lastPartialTranscriptTime = 0;
+    const PARTIAL_TRANSCRIPT_INTERVAL_MS = 200; // Send partial updates every 200ms
 
-  return {
-    onSetupComplete: () => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+    return {
+        onSetupComplete: () => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-      console.log(`[Gemini] Setup complete for session ${sessionId}`);
-      session.status = "live";
-      session.startedAt = Date.now();
+            // Make setup idempotent: avoid restarting timers and re-sending status on reconnects
+            if (session.status === "live" && session.startedAt) {
+                console.log(
+                    `[Gemini] Setup already completed for session ${sessionId}, ignoring duplicate onSetupComplete`
+                );
+                return;
+            }
 
-      // Update DB status
-      prisma.interviewSession
-        .update({
-          where: { id: sessionId },
-          data: { status: "LIVE", startedAt: new Date() },
-        })
-        .catch((err: unknown) =>
-          console.error("[DB] Failed to update session to LIVE:", err)
-        );
+            console.log(`[Gemini] Setup complete for session ${sessionId}`);
+            session.status = "live";
+            session.startedAt = Date.now();
 
-      sendToClient(session.clientWs, { type: "status", status: "LIVE" });
-    },
+            // Update DB status
+            prisma.interviewSession
+                .update({
+                    where: { id: sessionId },
+                    data: { status: "LIVE", startedAt: new Date() },
+                })
+                .catch((err: unknown) =>
+                    console.error("[DB] Failed to update session to LIVE:", err)
+                );
 
-    onAudioData: (base64Pcm24: string) => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            sendToClient(session.clientWs, { type: "status", status: "LIVE" });
 
-      // Enable audio forwarding once model starts speaking (grace period over)
-      if (!session.audioForwardingEnabled) {
-        session.audioForwardingEnabled = true;
-        console.log(`[WS] Audio forwarding enabled (model spoke) for session ${sessionId}`);
-      }
+            // Start 10-minute session timeout with warning
+            startSessionTimeout(sessionId);
+        },
 
-      // Mark model as speaking — gates client mic audio to prevent echo
-      session.modelSpeaking = true;
-      if (session.modelSpeakingTimeout) {
-        clearTimeout(session.modelSpeakingTimeout);
-        session.modelSpeakingTimeout = null;
-      }
+        onAudioData: (base64Pcm24: string) => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-      // Decode base64 to binary buffer, send as binary frame
-      const buffer = Buffer.from(base64Pcm24, "base64");
-      if (session.clientWs.readyState === session.clientWs.OPEN) {
-        session.clientWs.send(buffer);
-      }
-    },
+            // Enable audio forwarding once model starts speaking (grace period over)
+            if (!session.audioForwardingEnabled) {
+                session.audioForwardingEnabled = true;
+                console.log(`[WS] Audio forwarding enabled (model spoke) for session ${sessionId}`);
+            }
 
-    onInputTranscription: (text: string, finished: boolean) => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            // Mark model as speaking — gates client mic audio to prevent echo
+            session.modelSpeaking = true;
+            if (session.modelSpeakingTimeout) {
+                clearTimeout(session.modelSpeakingTimeout);
+                session.modelSpeakingTimeout = null;
+            }
 
-      inputTranscriptCount++;
-      // Only log in debug mode - avoid logging user speech content in production
-      if (env.DEBUG && inputTranscriptCount <= 5) {
-        console.log(
-          `[Gemini] InputTranscription #${inputTranscriptCount}: "${text.slice(0, 30)}..." finished=${finished}`
-        );
-      }
+            // Decode base64 to binary buffer, send as binary frame
+            const buffer = Buffer.from(base64Pcm24, "base64");
+            if (session.clientWs.readyState === session.clientWs.OPEN) {
+                session.clientWs.send(buffer);
+            }
+        },
 
-      session.pendingUserText += text;
+        onInputTranscription: (text: string, finished: boolean) => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-      // Flush if API sends finished flag (may or may not happen per API version)
-      if (finished) {
-        console.log(`[Gemini] User speech finished, flushing transcription`);
-        flushPendingUserText(sessionId);
-      }
-    },
+            inputTranscriptCount++;
+            // Only log in debug mode - avoid logging user speech content in production
+            if (env.DEBUG && inputTranscriptCount <= 5) {
+                console.log(
+                    `[Gemini] InputTranscription #${inputTranscriptCount}: "${text.slice(0, 30)}..." finished=${finished}`
+                );
+            }
 
-    onOutputTranscription: (text: string, finished: boolean) => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            session.pendingUserText += text;
 
-      outputTranscriptCount++;
-      if (outputTranscriptCount <= 5) {
-        console.log(
-          `[Gemini] OutputTranscription #${outputTranscriptCount}: "${text}" finished=${finished}`
-        );
-      }
+            // Flush if API sends finished flag (may or may not happen per API version)
+            if (finished) {
+                console.log(`[Gemini] User speech finished, flushing transcription`);
+                flushPendingUserText(sessionId);
+            }
+        },
 
-      // When model starts outputting text, flush any pending user text first
-      // (the user finished speaking and now the model is responding)
-      if (session.pendingUserText.trim()) {
-        flushPendingUserText(sessionId);
-      }
+        onOutputTranscription: (text: string, finished: boolean) => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-      session.pendingModelText += text;
+            outputTranscriptCount++;
+            if (outputTranscriptCount <= 5) {
+                console.log(
+                    `[Gemini] OutputTranscription #${outputTranscriptCount}: "${text}" finished=${finished}`
+                );
+            }
 
-      // Send partial transcript updates with throttling (every 200ms).
-      // The final transcript is sent via flushPendingModelText() when finished is true.
-      const now = Date.now();
-      const shouldSendPartial =
-        !finished &&
-        now - lastPartialTranscriptTime >= PARTIAL_TRANSCRIPT_INTERVAL_MS;
+            // When model starts outputting text, flush any pending user text first
+            // (the user finished speaking and now the model is responding)
+            if (session.pendingUserText.trim()) {
+                flushPendingUserText(sessionId);
+            }
 
-      if (shouldSendPartial) {
-        lastPartialTranscriptTime = now;
-        const partialEntry: TranscriptEntry = {
-          role: "model",
-          text: session.pendingModelText,
-          timestamp: Date.now() - session.startedAt,
-          partial: true,
-        };
-        sendToClient(session.clientWs, { type: "transcript", entry: partialEntry });
-      }
+            session.pendingModelText += text;
 
-      // Flush if API sends finished flag; this will send the final transcript once.
-      if (finished) {
-        flushPendingModelText(sessionId);
-      }
-    },
+            // Send partial transcript updates with throttling (every 200ms).
+            // The final transcript is sent via flushPendingModelText() when finished is true.
+            const now = Date.now();
+            const shouldSendPartial =
+                !finished &&
+                now - lastPartialTranscriptTime >= PARTIAL_TRANSCRIPT_INTERVAL_MS;
 
-    onInterrupted: () => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            if (shouldSendPartial) {
+                lastPartialTranscriptTime = now;
+                const partialEntry: TranscriptEntry = {
+                    role: "model",
+                    text: session.pendingModelText,
+                    timestamp: Date.now() - session.startedAt,
+                    partial: true,
+                };
+                sendToClient(session.clientWs, { type: "transcript", entry: partialEntry });
+            }
 
-      // User interrupted — immediately ungate mic audio
-      session.modelSpeaking = false;
-      if (session.modelSpeakingTimeout) {
-        clearTimeout(session.modelSpeakingTimeout);
-        session.modelSpeakingTimeout = null;
-      }
+            // Flush if API sends finished flag; this will send the final transcript once.
+            if (finished) {
+                flushPendingModelText(sessionId);
+            }
+        },
 
-      // Flush any partial model text before clearing
-      flushPendingModelText(sessionId);
-      session.pendingModelText = "";
+        onInterrupted: () => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-      // Discard partial audio/video for this interrupted turn
-      session.currentTurnAudioChunks = [];
-      session.currentTurnVideoSnapshots = [];
+            // User interrupted — immediately ungate mic audio
+            session.modelSpeaking = false;
+            if (session.modelSpeakingTimeout) {
+                clearTimeout(session.modelSpeakingTimeout);
+                session.modelSpeakingTimeout = null;
+            }
 
-      sendToClient(session.clientWs, { type: "interrupt" });
-    },
+            // Flush any partial model text before clearing
+            flushPendingModelText(sessionId);
+            session.pendingModelText = "";
 
-    onTurnComplete: () => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            // Discard partial audio/video for this interrupted turn
+            session.currentTurnAudioChunks = [];
+            session.currentTurnVideoSnapshots = [];
 
-      // Flush any remaining pending transcription text
-      // This is the primary flush mechanism per Google's recommendation:
-      // buffer streaming chunks and flush on turnComplete
-      flushPendingUserText(sessionId);
-      flushPendingModelText(sessionId);
+            sendToClient(session.clientWs, { type: "interrupt" });
+        },
 
-      // Model finished speaking — ungate mic after a short delay
-      // to let residual echo from speakers die down
-      if (session.modelSpeakingTimeout) {
-        clearTimeout(session.modelSpeakingTimeout);
-      }
-      console.log(`[WS] AI finished speaking, will lift audio gate in 300ms`);
-      session.modelSpeakingTimeout = setTimeout(() => {
-        session.modelSpeaking = false;
-        session.modelSpeakingTimeout = null;
-        console.log(`[WS] Audio gate LIFTED for session ${sessionId}`);
-      }, 300);
+        onTurnComplete: () => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-      sendToClient(session.clientWs, { type: "turnComplete" });
-    },
+            // Flush any remaining pending transcription text
+            // This is the primary flush mechanism per Google's recommendation:
+            // buffer streaming chunks and flush on turnComplete
+            flushPendingUserText(sessionId);
+            flushPendingModelText(sessionId);
 
-    onGoAway: (timeLeftMs: number) => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            // Model finished speaking — ungate mic after a short delay
+            // to let residual echo from speakers die down
+            if (session.modelSpeakingTimeout) {
+                clearTimeout(session.modelSpeakingTimeout);
+            }
+            console.log(`[WS] AI finished speaking, will lift audio gate in 300ms`);
+            session.modelSpeakingTimeout = setTimeout(() => {
+                session.modelSpeaking = false;
+                session.modelSpeakingTimeout = null;
+                console.log(`[WS] Audio gate LIFTED for session ${sessionId}`);
+            }, 300);
 
-      console.log(
-        `[Gemini] GoAway for session ${sessionId}, ${timeLeftMs}ms remaining`
-      );
+            sendToClient(session.clientWs, { type: "turnComplete" });
+        },
 
-      if (session.resumptionHandle) {
-        attemptReconnect(sessionId, session.resumptionHandle);
-      } else {
-        console.warn("[Gemini] No resumption handle available");
-      }
-    },
+        onGoAway: (timeLeftMs: number) => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-    onSessionResumptionUpdate: (handle: string, resumable: boolean) => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            console.log(
+                `[Gemini] GoAway for session ${sessionId}, ${timeLeftMs}ms remaining`
+            );
 
-      if (resumable) {
-        session.resumptionHandle = handle;
-      }
-    },
+            if (session.resumptionHandle) {
+                attemptReconnect(sessionId, session.resumptionHandle);
+            } else {
+                console.warn("[Gemini] No resumption handle available");
+            }
+        },
 
-    onError: (error: Error) => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+        onSessionResumptionUpdate: (handle: string, resumable: boolean) => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-      console.error(`[Gemini] Error for session ${sessionId}:`, error);
-      sendToClient(session.clientWs, {
-        type: "error",
-        message: "AI connection error",
-      });
+            if (resumable) {
+                session.resumptionHandle = handle;
+            }
+        },
 
-      if (session.resumptionHandle && session.status === "live") {
-        attemptReconnect(sessionId, session.resumptionHandle);
-      } else {
-        cleanupSession(sessionId, "ERROR");
-      }
-    },
+        onError: (error: Error) => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
 
-    onClose: () => {
-      const session = getActiveSession(sessionId);
-      if (!session) return;
+            console.error(`[Gemini] Error for session ${sessionId}:`, error);
+            sendToClient(session.clientWs, {
+                type: "error",
+                message: "AI connection error",
+            });
 
-      // Expected close during cleanup or already reconnecting
-      if (session.status === "ending" || session.status === "closed" || session.status === "reconnecting") {
-        console.log(`[Gemini] Connection closed (expected, status=${session.status}) for session ${sessionId}`);
-        return;
-      }
+            const sessionAny = session as any;
+            if (sessionAny.sessionTimeout) {
+                clearTimeout(sessionAny.sessionTimeout);
+                sessionAny.sessionTimeout = null;
+            }
 
-      console.log(
-        `[Gemini] Unexpected close for session ${sessionId}`
-      );
+            session.status = "reconnecting";
+            console.log(`[Gemini] Attempting reconnect for session ${sessionId}`);
 
-      if (session.resumptionHandle) {
-        attemptReconnect(sessionId, session.resumptionHandle);
-      } else {
-        cleanupSession(sessionId, "ERROR");
-      }
-    },
-  };
+            if (session.geminiSession) {
+                closeGeminiSession(session.geminiSession);
+                session.geminiSession = null;
+            }
+        },
+
+        onClose: () => {
+            const session = getActiveSession(sessionId);
+            if (!session) return;
+
+            // Expected close during cleanup or already reconnecting
+            if (session.status === "ending" || session.status === "closed" || session.status === "reconnecting") {
+                console.log(`[Gemini] Connection closed (expected, status=${session.status}) for session ${sessionId}`);
+                return;
+            }
+
+            console.log(
+                `[Gemini] Unexpected close for session ${sessionId}`
+            );
+
+            if (session.resumptionHandle) {
+                attemptReconnect(sessionId, session.resumptionHandle);
+            } else {
+                cleanupSession(sessionId, "ERROR");
+            }
+        },
+    };
 }
 
 async function attemptReconnect(
-  sessionId: string,
-  handle: string
+    sessionId: string,
+    handle: string
 ): Promise<void> {
-  const session = getActiveSession(sessionId);
-  if (!session) return;
+    const session = getActiveSession(sessionId);
+    if (!session) return;
 
-  // Prevent duplicate reconnects (GoAway + onClose both fire)
-  if (session.status === "reconnecting" || session.status === "ending" || session.status === "closed") {
-    console.log(`[Gemini] Skipping reconnect — session ${sessionId} already ${session.status}`);
-    return;
-  }
+    // Prevent duplicate reconnects (GoAway + onClose both fire)
+    if (session.status === "reconnecting" || session.status === "ending" || session.status === "closed") {
+        console.log(`[Gemini] Skipping reconnect — session ${sessionId} already ${session.status}`);
+        return;
+    }
 
-  session.status = "reconnecting";
-  console.log(`[Gemini] Attempting reconnect for session ${sessionId}`);
+    session.status = "reconnecting";
+    console.log(`[Gemini] Attempting reconnect for session ${sessionId}`);
 
-  // Close old Gemini session
-  if (session.geminiSession) {
-    closeGeminiSession(session.geminiSession);
-    session.geminiSession = null;
-  }
+    // Close old Gemini session
+    if (session.geminiSession) {
+        closeGeminiSession(session.geminiSession);
+        session.geminiSession = null;
+    }
 
-  try {
-    const dbSession = await prisma.interviewSession.findUnique({
-      where: { id: sessionId },
-    });
-    if (!dbSession) throw new Error("Session not found in DB");
+    try {
+        const dbSession = await prisma.interviewSession.findUnique({
+            where: { id: sessionId },
+        });
+        if (!dbSession) throw new Error("Session not found in DB");
 
-    const systemPrompt = buildSystemPrompt(session.persona, {
-      jobTitle: dbSession.jobTitle,
-      companyName: dbSession.companyName,
-      interviewType: dbSession.interviewType as InterviewType,
-    });
-    const contextMsg = buildContextMessage({
-      jobTitle: dbSession.jobTitle,
-      companyName: dbSession.companyName,
-      jobDescription: dbSession.jobDescription,
-      cvContent: dbSession.cvContent ?? undefined,
-    });
+        const systemPrompt = buildSystemPrompt(session.persona, {
+            jobTitle: dbSession.jobTitle,
+            companyName: dbSession.companyName,
+            interviewType: dbSession.interviewType as InterviewType,
+        });
+        const contextMsg = buildContextMessage({
+            jobTitle: dbSession.jobTitle,
+            companyName: dbSession.companyName,
+            jobDescription: dbSession.jobDescription,
+            cvContent: dbSession.cvContent ?? undefined,
+        });
 
-    const geminiCallbacks = buildGeminiCallbacks(sessionId);
-    const newGeminiSession = await connectToGemini({
-      systemPrompt,
-      voiceName: session.persona.voiceName,
-      resumptionHandle: handle,
-      callbacks: geminiCallbacks,
-    });
+        const geminiCallbacks = buildGeminiCallbacks(sessionId);
+        const newGeminiSession = await connectToGemini({
+            systemPrompt,
+            voiceName: session.persona.voiceName,
+            resumptionHandle: handle,
+            callbacks: geminiCallbacks,
+        });
 
-    session.geminiSession = newGeminiSession;
-    sendContextToGemini(newGeminiSession, contextMsg);
-    // onSetupComplete will fire and set status back to "live"
-  } catch (err) {
-    console.error(
-      `[Gemini] Reconnect failed for session ${sessionId}:`,
-      err
-    );
-    sendToClient(session.clientWs, {
-      type: "error",
-      message: "Reconnection failed",
-    });
-    cleanupSession(sessionId, "ERROR");
-  }
+        session.geminiSession = newGeminiSession;
+        sendContextToGemini(newGeminiSession, contextMsg);
+        // onSetupComplete will fire and set status back to "live"
+    } catch (err) {
+        console.error(
+            `[Gemini] Reconnect failed for session ${sessionId}:`,
+            err
+        );
+        sendToClient(session.clientWs, {
+            type: "error",
+            message: "Reconnection failed",
+        });
+        cleanupSession(sessionId, "ERROR");
+    }
 }
 
 async function cleanupSession(
-  sessionId: string,
-  finalStatus: "COMPLETED" | "ERROR"
+    sessionId: string,
+    finalStatus: "COMPLETED" | "ERROR"
 ): Promise<void> {
-  const session = getActiveSession(sessionId);
-  if (!session || session.status === "closed") return;
+    const session = getActiveSession(sessionId);
+    if (!session || session.status === "closed") return;
 
-  session.status = "ending";
-  console.log(
-    `[WS] Cleaning up session ${sessionId} → ${finalStatus}`
-  );
-
-  // Clear audio gate timeout
-  if (session.modelSpeakingTimeout) {
-    clearTimeout(session.modelSpeakingTimeout);
-    session.modelSpeakingTimeout = null;
-  }
-
-  // Close Gemini connection
-  if (session.geminiSession) {
-    closeGeminiSession(session.geminiSession);
-    session.geminiSession = null;
-  }
-
-  // Flush any remaining pending transcription text before saving
-  flushPendingUserText(sessionId);
-  flushPendingModelText(sessionId);
-
-  // Score the last Q&A pair if it wasn't captured by the normal turn detection
-  // (session ended before model could ask the next question)
-  const t = session.transcript;
-  if (t.length >= 2) {
-    const last = t[t.length - 1];
-    const prev = t[t.length - 2];
-    if (
-      last.role === "user" &&
-      prev.role === "model" &&
-      prev.text.includes("?") &&
-      session.currentTurnAudioChunks.length > 0
-    ) {
-      const qi = session.currentQuestionIndex;
-      const media = {
-        questionIndex: qi,
-        question: prev.text,
-        answerText: last.text,
-        audioPcmChunks: [...session.currentTurnAudioChunks],
-        videoSnapshots: [...session.currentTurnVideoSnapshots],
-      };
-      session.currentTurnAudioChunks = [];
-      session.currentTurnVideoSnapshots = [];
-
-      scoreQuestion(sessionId, media, session.scoringContext).catch((err) =>
-        console.error(`[Scoring] Q${qi} (cleanup) failed:`, err)
-      );
-    }
-  }
-
-  // Save transcript to DB
-  try {
-    await prisma.interviewSession.update({
-      where: { id: sessionId },
-      data: {
-        status: finalStatus,
-        endedAt: new Date(),
-        transcript: JSON.stringify(session.transcript),
-      },
-    });
+    session.status = "ending";
     console.log(
-      `[DB] Session ${sessionId} saved with ${session.transcript.length} transcript entries`
+        `[WS] Cleaning up session ${sessionId} → ${finalStatus}`
     );
-  } catch (err) {
-    console.error(`[DB] Failed to save session ${sessionId}:`, err);
-  }
 
-  // Notify client
-  sendToClient(session.clientWs, { type: "status", status: finalStatus });
+    // Clear audio gate timeout
+    if (session.modelSpeakingTimeout) {
+        clearTimeout(session.modelSpeakingTimeout);
+        session.modelSpeakingTimeout = null;
+    }
 
-  // Close client WS
-  if (session.clientWs.readyState === session.clientWs.OPEN) {
-    session.clientWs.close(1000, finalStatus);
-  }
+    // Clear session timeout timers
+    clearSessionTimeouts(sessionId);
 
-  session.status = "closed";
-  deleteActiveSession(sessionId);
+    // Close Gemini connection
+    if (session.geminiSession) {
+        closeGeminiSession(session.geminiSession);
+        session.geminiSession = null;
+    }
+
+    // Flush any remaining pending transcription text before saving
+    flushPendingUserText(sessionId);
+    flushPendingModelText(sessionId);
+
+    // Score the last Q&A pair if it wasn't captured by the normal turn detection
+    // (session ended before model could ask the next question)
+    const t = session.transcript;
+    if (t.length >= 2) {
+        const last = t[t.length - 1];
+        const prev = t[t.length - 2];
+        if (
+            last.role === "user" &&
+            prev.role === "model" &&
+            prev.text.includes("?") &&
+            session.currentTurnAudioChunks.length > 0
+        ) {
+            const qi = session.currentQuestionIndex;
+            const media = {
+                questionIndex: qi,
+                question: prev.text,
+                answerText: last.text,
+                audioPcmChunks: [...session.currentTurnAudioChunks],
+                videoSnapshots: [...session.currentTurnVideoSnapshots],
+            };
+            session.currentTurnAudioChunks = [];
+            session.currentTurnVideoSnapshots = [];
+
+            scoreQuestion(sessionId, media, session.scoringContext).catch((err) =>
+                console.error(`[Scoring] Q${qi} (cleanup) failed:`, err)
+            );
+        }
+    }
+
+    // Save transcript to DB
+    try {
+        await prisma.interviewSession.update({
+            where: { id: sessionId },
+            data: {
+                status: finalStatus,
+                endedAt: new Date(),
+                transcript: JSON.stringify(session.transcript),
+            },
+        });
+        console.log(
+            `[DB] Session ${sessionId} saved with ${session.transcript.length} transcript entries`
+        );
+    } catch (err) {
+        console.error(`[DB] Failed to save session ${sessionId}:`, err);
+    }
+
+    // Notify client
+    sendToClient(session.clientWs, { type: "status", status: finalStatus });
+
+    // Close client WS
+    if (session.clientWs.readyState === session.clientWs.OPEN) {
+        session.clientWs.close(1000, finalStatus);
+    }
+
+    session.status = "closed";
+    deleteActiveSession(sessionId);
 }
