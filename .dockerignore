@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.db
+*.db-journal
+.env
+.env.local
+*.tsbuildinfo
+server/src/generated/
+server/node_modules/
+client/node_modules/
+client/dist/
+.git
+.archieved
+docs
+*.md
+!README.md
+server.log
