@@ -1,33 +1,33 @@
-import * as React from "react"
-import { XIcon } from "lucide-react"
-import { Dialog as DialogPrimitive } from "radix-ui"
+import * as React from "react";
+import { XIcon } from "lucide-react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 
-import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
-}
+};
 
 function DialogTrigger({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
-}
+};
 
 function DialogPortal({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
-}
+};
 
 function DialogClose({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Close>) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
-}
+};
 
 function DialogOverlay({
   className,
@@ -43,7 +43,7 @@ function DialogOverlay({
       {...props}
     />
   )
-}
+};
 
 function DialogContent({
   className,
@@ -77,7 +77,7 @@ function DialogContent({
       </DialogPrimitive.Content>
     </DialogPortal>
   )
-}
+};
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
@@ -87,7 +87,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
       {...props}
     />
   )
-}
+};
 
 function DialogFooter({
   className,
@@ -114,7 +114,7 @@ function DialogFooter({
       )}
     </div>
   )
-}
+};
 
 function DialogTitle({
   className,
@@ -127,7 +127,7 @@ function DialogTitle({
       {...props}
     />
   )
-}
+};
 
 function DialogDescription({
   className,
@@ -140,7 +140,7 @@ function DialogDescription({
       {...props}
     />
   )
-}
+};
 
 export {
   Dialog,
@@ -153,4 +153,4 @@ export {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
-}
+};

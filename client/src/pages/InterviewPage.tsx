@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { Mic, MicOff, PhoneOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,12 +49,6 @@ export function InterviewPage() {
         }
     }, [status, id, navigate]);
 
-    // Auto-scroll transcript
-    const transcriptEndRef = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [transcript]);
-
     // Parse persona config for display
     const persona = session
         ? (() => {
@@ -79,6 +73,11 @@ export function InterviewPage() {
     const currentQuestion = transcript
         .filter((e) => e.role === "model")
         .pop()?.text ?? null;
+
+    //  Alias for clarity: elapsedMs from the server represents remaining time for the interview.
+    //   Using a locally named variable helps avoid confusion in the UI code.
+    const remainingMs = elapsedMs;
+
 
     // Connecting state
     if (status === "CREATED") {
@@ -196,10 +195,10 @@ export function InterviewPage() {
 
                 {/* Right: Timer + Status */}
                 <div className="flex items-center gap-4">
-                    {/* Duration pill */}
+                    {/* Time remaining pill */}
                     <div className="flex items-center gap-2 rounded-full bg-white/5 px-4 py-2 ring-1 ring-white/10">
                         <span className="font-mono text-sm font-medium text-white/80">
-                            {timeLoaded ? formatTime(elapsedMs) : "--:--"}
+                            {timeLoaded ? formatTime(remainingMs) : "--:--"}
                         </span>
                     </div>
 

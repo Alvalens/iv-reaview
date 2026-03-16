@@ -265,7 +265,7 @@ export function useLiveSession(sessionId: string) {
     let cancelled = false;
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//localhost:8080/ws/interview/${sessionId}`;
+    const wsUrl = `${protocol}//${location.host}/ws/interview/${sessionId}`;
     console.log("[LiveSession] Connecting to", wsUrl);
 
     const ws = new WebSocket(wsUrl);
