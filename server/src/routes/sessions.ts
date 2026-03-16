@@ -1,12 +1,19 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Response } from "express";
 import { prisma } from "../db/prisma.js";
 import { getPersona, generateRandomPersona } from "../services/persona-generator.js";
+import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
 import type { CreateSessionRequest } from "../types/index.js";
 
 export const sessionsRouter = Router();
 
+// Apply auth middleware to all session routes
+sessionsRouter.use(authMiddleware);
+
 // POST /api/sessions — Create a new interview session
-sessionsRouter.post("/", async (req: Request, res: Response) => {
+sessionsRouter.post("/", async (req: AuthRequest, res: Response) => {
+  // authMiddleware guarantees req.user is set - use non-null assertion for type safety
+  const userId = req.user!.userId;
+
   const body = req.body as CreateSessionRequest;
 
   if (!body.jobTitle || !body.companyName || !body.jobDescription) {
@@ -56,6 +63,7 @@ sessionsRouter.post("/", async (req: Request, res: Response) => {
       personaConfig: JSON.stringify(selectedPersona),
       voiceName: selectedPersona.voiceName,
       duration: body.duration ?? 600,
+      userId,
     },
   });
 
@@ -63,7 +71,7 @@ sessionsRouter.post("/", async (req: Request, res: Response) => {
 });
 
 // GET /api/sessions/:id — Get session details
-sessionsRouter.get("/:id", async (req: Request, res: Response) => {
+sessionsRouter.get("/:id", async (req: AuthRequest, res: Response) => {
   const session = await prisma.interviewSession.findUnique({
     where: { id: req.params.id as string },
     include: { questions: true },

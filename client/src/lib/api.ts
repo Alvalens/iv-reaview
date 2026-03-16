@@ -3,15 +3,35 @@ const RAW_API_BASE = import.meta.env.VITE_API_BASE_URL;
 const API_BASE =
    (RAW_API_BASE && RAW_API_BASE.trim().replace(/\/+$/, "")) || "/api";
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem("token");
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function request<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
+  const isFormData = options?.body instanceof FormData;
+
+  // Build headers: don't set Content-Type for FormData (browser sets it with boundary)
+  const headers: HeadersInit = isFormData
+    ? {
+        ...getAuthHeaders(),
+        ...(options?.headers || {}),
+      }
+    : {
+        "Content-Type": "application/json",
+        ...getAuthHeaders(),
+        ...(options?.headers || {}),
+      };
+
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    headers,
     ...options,
   });
 
@@ -40,10 +60,11 @@ export const api = {
   scoreSession: async (id: string): Promise<ScoringResult> => {
     // Poll until scoring completes (server returns 202 while per-question scoring is running)
     const maxAttempts = 30;
+    const headers = getAuthHeaders();
     for (let i = 0; i < maxAttempts; i++) {
       const res = await fetch(`${API_BASE}/sessions/${id}/score`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
       });
 
       if (res.status === 202) {
@@ -68,6 +89,9 @@ export const api = {
     formData.append("file", file);
     const res = await fetch(`${API_BASE}/cv/extract`, {
       method: "POST",
+      headers: {
+        ...getAuthHeaders(),
+      },
       body: formData,
     });
     if (!res.ok) {
