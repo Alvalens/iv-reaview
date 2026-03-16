@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type Router as RouterType } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { prisma } from "../db/prisma.js";
@@ -6,7 +6,7 @@ import { env } from "../config/env.js";
 import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
 import { authLimiter } from "../middleware/rate-limit.js";
 
-export const authRouter = Router();
+export const authRouter: RouterType = Router();
 
 // Types
 interface RegisterBody {

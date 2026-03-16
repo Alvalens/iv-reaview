@@ -1,11 +1,11 @@
-import { Router, type Response } from "express";
+import { Router, type Response, type Router as RouterType } from "express";
 import { prisma } from "../db/prisma.js";
 import { aggregateSessionScores } from "../services/scoring.js";
 import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
 import { aiApiLimiter } from "../middleware/rate-limit.js";
 import type { InterviewType } from "../types/index.js";
 
-export const scoringRouter = Router();
+export const scoringRouter: RouterType = Router();
 
 // Apply auth middleware to all scoring routes
 scoringRouter.use(authMiddleware);

@@ -1,10 +1,10 @@
-import { Router, type Response } from "express";
+import { Router, type Response, type Router as RouterType } from "express";
 import { prisma } from "../db/prisma.js";
 import { getPersona, generateRandomPersona } from "../services/persona-generator.js";
 import { authMiddleware, type AuthRequest } from "../middleware/auth.js";
 import type { CreateSessionRequest } from "../types/index.js";
 
-export const sessionsRouter = Router();
+export const sessionsRouter: RouterType = Router();
 
 // Apply auth middleware to all session routes
 sessionsRouter.use(authMiddleware);

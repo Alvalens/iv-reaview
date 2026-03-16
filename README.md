@@ -1,4 +1,4 @@
-# iv-reaview — Intervyou Live (Realtime Interview)
+# iv-reaview — interview Live (Realtime Interview)
 
 Real-time AI interview practice using Gemini Live API for bidirectional voice conversations. Built for the Gemini Live Agent Challenge.
 
@@ -12,6 +12,8 @@ Real-time AI interview practice using Gemini Live API for bidirectional voice co
 - Comprehensive results dashboard with narrative feedback
 - Camera snapshots for non-verbal communication analysis
 - Session reconnection on Gemini WebSocket expiry
+- JWT authentication with user accounts
+- Rate limiting (API, auth, WebSocket)
 
 ## Quick Start
 
@@ -29,7 +31,7 @@ cd client && pnpm install && cd ..
 
 # Set up environment
 cp server/.env.example server/.env
-# Edit server/.env and add your GEMINI_API_KEY
+# Edit server/.env — add GEMINI_API_KEY and JWT_SECRET
 
 # Initialize database
 cd server
@@ -41,7 +43,7 @@ cd ..
 ### Run
 
 ```bash
-# Terminal 1 — Server (port 8767)
+# Terminal 1 — Server (port 8080)
 cd server && pnpm dev
 
 # Terminal 2 — Client (port 5173)
@@ -51,13 +53,14 @@ cd client && pnpm dev
 ### Verify
 
 - Client: http://localhost:5173
-- Server health: http://localhost:8767/api/health
+- Server health: http://localhost:8080/api/health
 - Prisma Studio: `cd server && npx prisma studio`
 
 ## Architecture
 
 - **Client**: React 19 + Vite + Tailwind CSS 4 + shadcn/ui
 - **Server**: Express 5 + ws + Prisma 7 + SQLite
+- **Auth**: JWT + bcrypt
 - **AI**: Gemini Live API (real-time interview) + Gemini 2.5 Flash (scoring + CV extraction + persona generation)
 
 The client/server split is required because Gemini Live API needs persistent WebSocket connections.
@@ -66,18 +69,91 @@ See `docs/architecture.md` for comprehensive architecture documentation with dia
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/sessions` | Create interview session |
-| `GET` | `/api/sessions/:id` | Get session details |
-| `POST` | `/api/sessions/:id/score` | Aggregate scores + generate narrative |
-| `POST` | `/api/cv/extract` | Upload PDF CV and extract text |
-| `WebSocket` | `/ws/interview/:sessionId` | Live interview audio/video stream |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/auth/register` | No | Create user account |
+| `POST` | `/api/auth/login` | No | Login, returns JWT |
+| `GET` | `/api/auth/me` | Yes | Get current user |
+| `POST` | `/api/sessions` | Yes | Create interview session |
+| `GET` | `/api/sessions/:id` | Yes | Get session details |
+| `POST` | `/api/sessions/:id/score` | Yes | Aggregate scores + generate narrative |
+| `POST` | `/api/cv/extract` | Yes | Upload PDF CV and extract text |
+| `WebSocket` | `/ws/interview/:sessionId` | — | Live interview audio/video stream |
 
 ## Environment Variables
 
 ```
 GEMINI_API_KEY     # Google AI API key (required)
+JWT_SECRET         # Secret for JWT signing (required)
 DATABASE_URL       # SQLite path (default: file:./dev.db)
 PORT               # Server port (default: 8080)
+JWT_EXPIRES_IN     # Token expiry (default: 7d)
 ```
+
+## Testing Instructions (for Judges)
+
+### Demo Credentials
+
+The deployed app comes with pre-seeded test accounts:
+
+| Username | Password |
+|----------|----------|
+| `demo` | `demo123456` |
+| `judge` | `judge123456` |
+
+### How to Test
+
+1. Open the app URL in **Google Chrome** (required for AudioWorklet + mic/camera)
+2. Log in with one of the demo credentials above
+3. **Choose a persona** — try Sarah (warm) or David (challenging), or Random for an AI-generated one
+4. **Enter job details** — any job title, company, and description
+5. **Optionally upload a CV** (PDF) — the AI will use it to personalize questions
+6. **Click Start Interview** — allow microphone and camera when prompted
+7. **Have a conversation** — the AI interviewer will greet you and ask questions naturally
+8. **Click End Interview** when done — you'll be redirected to the results dashboard
+9. **View results** — overall scores, per-question feedback, strengths, weaknesses, and narrative summary
+
+### Seed Demo Accounts Locally
+
+```bash
+cd server
+pnpm seed
+```
+
+This creates the demo/judge accounts in your local database.
+
+### Browser Requirements
+
+- Google Chrome or Microsoft Edge (latest)
+- Microphone access required
+- Camera access optional (enables non-verbal scoring)
+
+## Deployment
+
+Uses a multi-stage Dockerfile. Deploy to Google Cloud Run:
+
+**Manual deploy:**
+```bash
+gcloud builds submit --tag gcr.io/$GOOGLE_CLOUD_PROJECT/intervyou-live
+
+gcloud run deploy intervyou-live \
+  --image gcr.io/$GOOGLE_CLOUD_PROJECT/intervyou-live \
+  --region asia-southeast1 \
+  --allow-unauthenticated \
+  --min-instances 1 \
+  --max-instances 5 \
+  --timeout 900 \
+  --session-affinity \
+  --memory 512Mi \
+  --cpu 1 \
+  --set-env-vars "GEMINI_API_KEY=xxx,JWT_SECRET=xxx"
+```
+
+**Automated deploy (via cloudbuild.yaml):**
+```bash
+gcloud builds submit \
+  --config cloudbuild.yaml \
+  --substitutions _GEMINI_API_KEY=xxx,_JWT_SECRET=xxx
+```
+
+Demo accounts are automatically seeded on container startup.

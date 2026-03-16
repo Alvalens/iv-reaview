@@ -31,6 +31,7 @@ COPY --from=server-builder /app/server/package.json ./package.json
 COPY --from=server-builder /app/server/prisma ./prisma
 COPY --from=server-builder /app/server/prisma.config.ts ./prisma.config.ts
 COPY --from=server-builder /app/server/src/generated ./src/generated
+COPY --from=server-builder /app/server/src/generated ./dist/generated
 
 # Copy client build output → served as static files by Express
 COPY --from=client-builder /app/client/dist ./public
@@ -40,5 +41,9 @@ ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
-# Initialize SQLite DB + start server
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/index.js"]
+# Copy seed script + tsx for seeding
+COPY --from=server-builder /app/server/src/seed.ts ./src/seed.ts
+COPY --from=server-builder /app/server/src/db ./src/db
+
+# Initialize DB + seed demo accounts + start server
+CMD ["sh", "-c", "npx prisma db push && npx tsx src/seed.ts && node dist/index.js"]
