@@ -40,5 +40,9 @@ ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
-# Initialize SQLite DB + start server
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/index.js"]
+# Copy seed script + tsx for seeding
+COPY --from=server-builder /app/server/src/seed.ts ./src/seed.ts
+COPY --from=server-builder /app/server/src/db ./src/db
+
+# Initialize DB + seed demo accounts + start server
+CMD ["sh", "-c", "npx prisma db push --skip-generate && npx tsx src/seed.ts && node dist/index.js"]

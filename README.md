@@ -90,18 +90,70 @@ PORT               # Server port (default: 8080)
 JWT_EXPIRES_IN     # Token expiry (default: 7d)
 ```
 
+## Testing Instructions (for Judges)
+
+### Demo Credentials
+
+The deployed app comes with pre-seeded test accounts:
+
+| Username | Password |
+|----------|----------|
+| `demo` | `demo123456` |
+| `judge` | `judge123456` |
+
+### How to Test
+
+1. Open the app URL in **Google Chrome** (required for AudioWorklet + mic/camera)
+2. Log in with one of the demo credentials above
+3. **Choose a persona** — try Sarah (warm) or David (challenging), or Random for an AI-generated one
+4. **Enter job details** — any job title, company, and description
+5. **Optionally upload a CV** (PDF) — the AI will use it to personalize questions
+6. **Click Start Interview** — allow microphone and camera when prompted
+7. **Have a conversation** — the AI interviewer will greet you and ask questions naturally
+8. **Click End Interview** when done — you'll be redirected to the results dashboard
+9. **View results** — overall scores, per-question feedback, strengths, weaknesses, and narrative summary
+
+### Seed Demo Accounts Locally
+
+```bash
+cd server
+pnpm seed
+```
+
+This creates the demo/judge accounts in your local database.
+
+### Browser Requirements
+
+- Google Chrome or Microsoft Edge (latest)
+- Microphone access required
+- Camera access optional (enables non-verbal scoring)
+
 ## Deployment
 
 Uses a multi-stage Dockerfile. Deploy to Google Cloud Run:
 
+**Manual deploy:**
 ```bash
-gcloud builds submit --tag gcr.io/$GOOGLE_CLOUD_PROJECT/interview-live
-gcloud run deploy interview-live \
-  --image gcr.io/$GOOGLE_CLOUD_PROJECT/interview-live \
+gcloud builds submit --tag gcr.io/$GOOGLE_CLOUD_PROJECT/intervyou-live
+
+gcloud run deploy intervyou-live \
+  --image gcr.io/$GOOGLE_CLOUD_PROJECT/intervyou-live \
   --region asia-southeast1 \
   --allow-unauthenticated \
   --min-instances 1 \
+  --max-instances 5 \
   --timeout 900 \
   --session-affinity \
+  --memory 512Mi \
+  --cpu 1 \
   --set-env-vars "GEMINI_API_KEY=xxx,JWT_SECRET=xxx"
 ```
+
+**Automated deploy (via cloudbuild.yaml):**
+```bash
+gcloud builds submit \
+  --config cloudbuild.yaml \
+  --substitutions _GEMINI_API_KEY=xxx,_JWT_SECRET=xxx
+```
+
+Demo accounts are automatically seeded on container startup.
