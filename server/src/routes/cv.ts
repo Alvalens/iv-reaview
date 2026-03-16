@@ -2,8 +2,13 @@ import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { GoogleGenAI } from "@google/genai";
 import { env } from "../config/env.js";
+import { authMiddleware } from "../middleware/auth.js";
+import { aiApiLimiter } from "../middleware/rate-limit.js";
 
 export const cvRouter = Router();
+
+// Apply auth middleware to all CV routes
+cvRouter.use(authMiddleware);
 
 const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 
@@ -20,7 +25,8 @@ const upload = multer({
 });
 
 // POST /api/cv/extract — Upload PDF CV and extract text via Gemini
-cvRouter.post("/extract", upload.single("file"), async (req: Request, res: Response) => {
+// Rate limited since this endpoint calls Gemini AI API
+cvRouter.post("/extract", aiApiLimiter, upload.single("file"), async (req: Request, res: Response) => {
   const file = req.file;
   if (!file) {
     res.status(400).json({ error: "No PDF file uploaded" });

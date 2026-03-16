@@ -34,6 +34,7 @@ export interface TranscriptEntry {
   role: "user" | "model";
   text: string;
   timestamp: number; // ms since session start
+  partial?: boolean; // true for real-time partial transcriptions
 }
 
 // Session creation request

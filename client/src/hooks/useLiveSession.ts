@@ -16,6 +16,7 @@ import type { SessionStatus, TranscriptEntry } from "@/lib/types";
 class AudioStreamer {
   private ctx: AudioContext;
   private gainNode: GainNode;
+  private analyserNode: AnalyserNode | null = null;
   private queue: Float32Array[] = [];
   private isPlaying = false;
   private isStreamComplete = false;
@@ -35,6 +36,19 @@ class AudioStreamer {
     this.ctx = ctx;
     this.gainNode = this.ctx.createGain();
     this.gainNode.connect(this.ctx.destination);
+  }
+
+  /** Connect an analyser node to tap the audio for visualization */
+  connectAnalyser(analyser: AnalyserNode): void {
+    this.analyserNode = analyser;
+    this.gainNode.connect(analyser);
+  }
+
+  /** Reconnect analyser after gainNode is recreated */
+  private reconnectAnalyser(): void {
+    if (this.analyserNode) {
+      this.gainNode.connect(this.analyserNode);
+    }
   }
 
   addPCM16(pcm16Data: ArrayBuffer): void {
@@ -157,6 +171,8 @@ class AudioStreamer {
         this.gainNode.disconnect();
         this.gainNode = this.ctx.createGain();
         this.gainNode.connect(this.ctx.destination);
+        // Reconnect analyser to new gainNode
+        this.reconnectAnalyser();
       }
     }, 200);
   }
@@ -196,6 +212,7 @@ export function useLiveSession(sessionId: string) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
+  const [audioLevel, setAudioLevel] = useState(0); // 0-1 normalized amplitude
   const [timeWarning, setTimeWarning] = useState<number | null>(null);
   const [timeLoaded, setTimeLoaded] = useState(false);
 
@@ -217,6 +234,11 @@ export function useLiveSession(sessionId: string) {
 
   // Player ref
   const streamerRef = useRef<AudioStreamer | null>(null);
+
+  // Audio analyser refs for visualization
+  const playerAnalyserRef = useRef<AnalyserNode | null>(null);
+  const recorderAnalyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
 
   const endSession = useCallback(() => {
@@ -345,6 +367,14 @@ export function useLiveSession(sessionId: string) {
 
         source.connect(worklet);
         // Do NOT connect worklet to destination — prevents echo
+
+        // Create analyser for user audio visualization
+        const recorderAnalyser = ctx.createAnalyser();
+        recorderAnalyser.fftSize = 256;
+        recorderAnalyser.smoothingTimeConstant = 0.8;
+        source.connect(recorderAnalyser);
+        recorderAnalyserRef.current = recorderAnalyser;
+
         console.log("[LiveSession] Recorder started successfully");
       } catch (err) {
         console.error("[LiveSession] Recorder failed:", err);
@@ -401,7 +431,16 @@ export function useLiveSession(sessionId: string) {
       if (ctx.state === "suspended") {
         await ctx.resume();
       }
+
+      // Create analyser for AI audio visualization
+      const playerAnalyser = ctx.createAnalyser();
+      playerAnalyser.fftSize = 256;
+      playerAnalyser.smoothingTimeConstant = 0.8;
+      playerAnalyserRef.current = playerAnalyser;
+
       const streamer = new AudioStreamer(ctx);
+      streamer.connectAnalyser(playerAnalyser);
+
       // When all audio finishes playing through speakers, resume mic
       // Add 300ms delay for residual room echo to die down
       streamer.onComplete = () => {
@@ -412,6 +451,54 @@ export function useLiveSession(sessionId: string) {
         "[LiveSession] Player initialized, sampleRate:",
         ctx.sampleRate
       );
+
+      // Start audio level monitoring
+      startAudioLevelMonitoring();
+    }
+
+    // --- AUDIO LEVEL MONITORING ---
+    function startAudioLevelMonitoring() {
+      const dataArray = new Uint8Array(128);
+
+      function updateAudioLevel() {
+        if (cancelled) return;
+
+        let maxLevel = 0;
+
+        // Check AI audio level (player)
+        const playerAnalyser = playerAnalyserRef.current;
+        if (playerAnalyser) {
+          playerAnalyser.getByteFrequencyData(dataArray);
+          // Use for loop for better performance in animation frame
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i] ?? 0;
+          }
+          const avgLevel = sum / dataArray.length / 255;
+          maxLevel = Math.max(maxLevel, avgLevel);
+        }
+
+        // Check user audio level (recorder)
+        const recorderAnalyser = recorderAnalyserRef.current;
+        if (recorderAnalyser) {
+          recorderAnalyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i] ?? 0;
+          }
+          const avgLevel = sum / dataArray.length / 255;
+          maxLevel = Math.max(maxLevel, avgLevel);
+        }
+
+        // Ensure there's always some minimum visual when audio is playing
+        // This helps with the initial animation trigger
+        const displayLevel = maxLevel > 0.01 ? maxLevel : 0;
+
+        setAudioLevel(displayLevel);
+        animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
+      }
+
+      updateAudioLevel();
     }
 
     // --- WS MESSAGE HANDLERS ---
@@ -440,12 +527,25 @@ export function useLiveSession(sessionId: string) {
               cleanup();
             }
             break;
-          case "transcript":
-            setTranscript((prev) => [
-              ...prev,
-              msg.entry as TranscriptEntry,
-            ]);
+          case "transcript": {
+            const entry = msg.entry as TranscriptEntry;
+            setTranscript((prev) => {
+              // If the last entry is a partial for the same role, update it in place
+              if (prev.length > 0) {
+                const lastIndex = prev.length - 1;
+                const lastEntry = prev[lastIndex];
+                // Replace when: last entry is partial AND same role (handles both partial→partial and partial→final)
+                if (lastEntry && lastEntry.partial && lastEntry.role === entry.role) {
+                  const updated = [...prev];
+                  updated[lastIndex] = entry;
+                  return updated;
+                }
+              }
+              // Otherwise add as a new entry
+              return [...prev, entry];
+            });
             break;
+          }
           case "interrupt":
             streamerRef.current?.stop();
             break;
@@ -482,6 +582,12 @@ export function useLiveSession(sessionId: string) {
 
     function cleanup() {
       cancelled = true;
+
+      // Audio level animation
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
 
       // Timer
       if (timerRef.current) {
@@ -549,6 +655,7 @@ export function useLiveSession(sessionId: string) {
     endSession,
     elapsedMs,
     videoStream,
+    audioLevel,
     timeWarning,
     dismissWarning,
     timeLoaded,

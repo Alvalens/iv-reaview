@@ -34,6 +34,7 @@ export interface TranscriptEntry {
     role: "user" | "model";
     text: string;
     timestamp: number;
+    partial?: boolean;
 }
 
 // Interview session from API

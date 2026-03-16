@@ -9,7 +9,9 @@ import { env } from "./config/env.js";
 import { sessionsRouter } from "./routes/sessions.js";
 import { cvRouter } from "./routes/cv.js";
 import { scoringRouter } from "./routes/scoring.js";
+import { authRouter } from "./routes/auth.js";
 import { handleWebSocketConnection } from "./websocket/proxy.js";
+import { wsRateLimiter } from "./middleware/websocket-rate-limit.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,6 +26,9 @@ app.use(express.json());
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// Auth routes (rate limiting applied per-route in auth.ts for /login and /register only)
+app.use("/api/auth", authRouter);
 
 app.use("/api/sessions", sessionsRouter);
 app.use("/api/sessions", scoringRouter);
@@ -46,6 +51,13 @@ server.on("upgrade", (request, socket, head) => {
   const match = url.pathname.match(/^\/ws\/interview\/(.+)$/);
 
   if (!match) {
+    socket.destroy();
+    return;
+  }
+
+  // Check WebSocket rate limit
+  if (!wsRateLimiter.isAllowed(request)) {
+    socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n");
     socket.destroy();
     return;
   }
